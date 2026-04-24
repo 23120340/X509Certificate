@@ -1,13 +1,10 @@
 """
 client.py
 ---------
-Phần 3 của đề bài: Phía Client - quy trình xác thực chứng chỉ 5 bước.
-
-  Bước 1: Verify chữ ký số (self-signed -> dùng public key trong chính cert).
-  Bước 2: Kiểm tra thời hạn hiệu lực (Not Before / Not After).
-  Bước 3: Kiểm tra hostname (khớp với SAN).
-  Bước 4: Kiểm tra CRL (tải từ CRL Distribution Points và đối chiếu).
-  Bước 5: Gửi yêu cầu OCSP để kiểm tra trạng thái trực tuyến.
+Phía Client:
+  - Nhận CA cert + Server cert từ socket server.
+  - Xác thực server certificate theo 5 bước (chữ ký dùng CA Root public key).
+  - Gửi tin nhắn mã hóa (RSA-OAEP) tới server và nhận phản hồi.
 """
 
 import json
@@ -18,65 +15,103 @@ from datetime import datetime, timezone
 from cryptography import x509
 from cryptography.x509.oid import ExtensionOID, AuthorityInformationAccessOID
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
+from cryptography.hazmat.primitives import hashes
 from cryptography.exceptions import InvalidSignature
 
 
 # ============================================================================
-#  Lấy chứng chỉ từ Socket server
+#  Nhận certificate chain từ Socket server
 # ============================================================================
 
-def fetch_certificate(host: str, port: int, timeout: float = 5.0) -> bytes:
-    """Kết nối Socket server, gửi 'GET_CERT', nhận về PEM bytes."""
+def _recv_blob(s) -> bytes:
+    """Đọc một blob length-prefixed (4 bytes big-endian + data)."""
+    length_bytes = s.recv(4)
+    if len(length_bytes) < 4:
+        raise IOError("Không nhận được header độ dài từ server")
+    length = int.from_bytes(length_bytes, "big")
+    data = bytearray()
+    while len(data) < length:
+        chunk = s.recv(min(4096, length - len(data)))
+        if not chunk:
+            break
+        data.extend(chunk)
+    return bytes(data)
+
+
+def fetch_certificate(host: str, port: int, timeout: float = 5.0):
+    """
+    Kết nối server, gửi 'GET_CERT'.
+    Trả về (ca_pem: bytes, server_pem: bytes).
+    """
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.settimeout(timeout)
         s.connect((host, port))
         s.sendall(b"GET_CERT")
+        ca_pem = _recv_blob(s)
+        server_pem = _recv_blob(s)
+    return ca_pem, server_pem
 
-        length_bytes = s.recv(4)
-        if len(length_bytes) < 4:
-            raise IOError("Không nhận được header độ dài từ server")
-        length = int.from_bytes(length_bytes, "big")
 
-        data = bytearray()
-        while len(data) < length:
-            chunk = s.recv(min(4096, length - len(data)))
-            if not chunk:
-                break
-            data.extend(chunk)
-        return bytes(data)
+def send_encrypted_message(
+    host: str,
+    port: int,
+    message: str,
+    server_cert,
+    timeout: float = 5.0,
+) -> str:
+    """
+    Mã hóa message bằng public key của server (RSA-OAEP),
+    gửi tới server, nhận và trả về phản hồi dạng string.
+    """
+    public_key = server_cert.public_key()
+    encrypted = public_key.encrypt(
+        message.encode("utf-8"),
+        padding.OAEP(
+            mgf=padding.MGF1(algorithm=hashes.SHA256()),
+            algorithm=hashes.SHA256(),
+            label=None,
+        ),
+    )
+    hex_payload = encrypted.hex()
+    request = f"MSG_ENC:{hex_payload}"
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(timeout)
+        s.connect((host, port))
+        s.sendall(request.encode("utf-8"))
+        response = _recv_blob(s)
+    return response.decode("utf-8")
 
 
 # ============================================================================
 #  5 bước xác thực
 # ============================================================================
 
-def verify_signature(cert):
-    """Bước 1: Verify chữ ký của chứng chỉ tự ký."""
-    public_key = cert.public_key()
+def verify_signature(server_cert, ca_cert):
+    """Bước 1: Verify chữ ký server cert bằng public key của CA Root."""
+    ca_public_key = ca_cert.public_key()
     try:
-        if isinstance(public_key, rsa.RSAPublicKey):
-            public_key.verify(
-                cert.signature,
-                cert.tbs_certificate_bytes,
+        if isinstance(ca_public_key, rsa.RSAPublicKey):
+            ca_public_key.verify(
+                server_cert.signature,
+                server_cert.tbs_certificate_bytes,
                 padding.PKCS1v15(),
-                cert.signature_hash_algorithm,
+                server_cert.signature_hash_algorithm,
             )
         else:
-            # Hệ thống này chỉ dùng RSA, nhưng để phòng hờ:
-            public_key.verify(
-                cert.signature,
-                cert.tbs_certificate_bytes,
-                cert.signature_hash_algorithm,
+            ca_public_key.verify(
+                server_cert.signature,
+                server_cert.tbs_certificate_bytes,
+                server_cert.signature_hash_algorithm,
             )
-        return True, "Chữ ký HỢP LỆ (verified bằng public key của chính cert)"
+        return True, "Chữ ký HỢP LỆ (CA Root public key xác nhận)"
     except InvalidSignature:
-        return False, "Chữ ký KHÔNG hợp lệ - cert đã bị sửa đổi"
+        return False, "Chữ ký KHÔNG hợp lệ — cert bị giả mạo hoặc sai CA"
     except Exception as e:
         return False, f"Lỗi khi verify signature: {e}"
 
 
 def _get_not_valid_times(cert):
-    """Lấy not_valid_before / not_valid_after dạng UTC, tương thích nhiều phiên bản cryptography."""
     try:
         return cert.not_valid_before_utc, cert.not_valid_after_utc
     except AttributeError:
@@ -89,7 +124,6 @@ def check_validity(cert):
     """Bước 2: Kiểm tra Not Before / Not After."""
     now = datetime.now(timezone.utc)
     nb, na = _get_not_valid_times(cert)
-
     if now < nb:
         return False, f"Chứng chỉ CHƯA CÓ HIỆU LỰC (Not Before: {nb})"
     if now > na:
@@ -100,9 +134,7 @@ def check_validity(cert):
 def check_hostname(cert, hostname: str):
     """Bước 3: Hostname phải khớp SAN."""
     try:
-        san_ext = cert.extensions.get_extension_for_oid(
-            ExtensionOID.SUBJECT_ALTERNATIVE_NAME
-        )
+        san_ext = cert.extensions.get_extension_for_oid(ExtensionOID.SUBJECT_ALTERNATIVE_NAME)
     except x509.ExtensionNotFound:
         return False, "Không có Subject Alternative Name extension"
 
@@ -117,13 +149,11 @@ def check_hostname(cert, hostname: str):
 
 
 def check_crl(cert):
-    """Bước 4: Tải CRL từ URL trong CRL Distribution Points và đối chiếu."""
+    """Bước 4: Tải CRL từ CRL Distribution Points và đối chiếu serial."""
     try:
-        crl_ext = cert.extensions.get_extension_for_oid(
-            ExtensionOID.CRL_DISTRIBUTION_POINTS
-        )
+        crl_ext = cert.extensions.get_extension_for_oid(ExtensionOID.CRL_DISTRIBUTION_POINTS)
     except x509.ExtensionNotFound:
-        return True, "Không có CRL Distribution Points (bỏ qua bước này)"
+        return True, "Không có CRL Distribution Points (bỏ qua)"
 
     crl_urls = []
     for dp in crl_ext.value:
@@ -140,9 +170,7 @@ def check_crl(cert):
             with urllib.request.urlopen(url, timeout=5) as resp:
                 crl_data = resp.read()
             crl = x509.load_pem_x509_crl(crl_data)
-            revoked_entry = crl.get_revoked_certificate_by_serial_number(
-                cert.serial_number
-            )
+            revoked_entry = crl.get_revoked_certificate_by_serial_number(cert.serial_number)
             if revoked_entry is not None:
                 try:
                     rev_date = revoked_entry.revocation_date_utc
@@ -160,11 +188,9 @@ def check_crl(cert):
 
 
 def check_ocsp(cert):
-    """Bước 5: Gọi OCSP service bằng HTTP đơn giản."""
+    """Bước 5: Gọi OCSP service kiểm tra trạng thái trực tuyến."""
     try:
-        aia = cert.extensions.get_extension_for_oid(
-            ExtensionOID.AUTHORITY_INFORMATION_ACCESS
-        )
+        aia = cert.extensions.get_extension_for_oid(ExtensionOID.AUTHORITY_INFORMATION_ACCESS)
     except x509.ExtensionNotFound:
         return True, "Không có AIA/OCSP URL (bỏ qua)"
 
@@ -196,27 +222,27 @@ def check_ocsp(cert):
 
 
 # ============================================================================
-#  Orchestrator: chạy đủ 5 bước và trả kết quả
+#  Orchestrator: chạy đủ 5 bước
 # ============================================================================
 
-def verify_certificate_full(cert_bytes: bytes, hostname: str, log_callback=None):
+def verify_certificate_full(ca_pem: bytes, server_pem: bytes, hostname: str, log_callback=None):
     """
-    Chạy đủ quy trình 5 bước.
-
-    Trả về: (overall_pass: bool, results: list[(name, ok, msg)], cert)
+    Xác thực server certificate theo 5 bước.
+    Trả về (overall_pass: bool, results: list[(name, ok, msg)], server_cert, ca_cert).
     """
-    cert = x509.load_pem_x509_certificate(cert_bytes)
+    ca_cert = x509.load_pem_x509_certificate(ca_pem)
+    server_cert = x509.load_pem_x509_certificate(server_pem)
 
     def log(msg):
         if log_callback:
             log_callback(msg)
 
     steps = [
-        ("Bước 1 - Verify chữ ký số", lambda: verify_signature(cert)),
-        ("Bước 2 - Thời hạn hiệu lực", lambda: check_validity(cert)),
-        (f"Bước 3 - Hostname ({hostname})", lambda: check_hostname(cert, hostname)),
-        ("Bước 4 - CRL check", lambda: check_crl(cert)),
-        ("Bước 5 - OCSP check", lambda: check_ocsp(cert)),
+        ("Bước 1 - Verify chữ ký (CA Root)", lambda: verify_signature(server_cert, ca_cert)),
+        ("Bước 2 - Thời hạn hiệu lực",       lambda: check_validity(server_cert)),
+        (f"Bước 3 - Hostname ({hostname})",   lambda: check_hostname(server_cert, hostname)),
+        ("Bước 4 - CRL check",                lambda: check_crl(server_cert)),
+        ("Bước 5 - OCSP check",               lambda: check_ocsp(server_cert)),
     ]
 
     results = []
@@ -227,4 +253,4 @@ def verify_certificate_full(cert_bytes: bytes, hostname: str, log_callback=None)
         results.append((name, ok, msg))
 
     overall = all(ok for _, ok, _ in results)
-    return overall, results, cert
+    return overall, results, server_cert, ca_cert

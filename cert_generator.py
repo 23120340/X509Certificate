@@ -1,75 +1,35 @@
 """
 cert_generator.py
 -----------------
-Phần 1 của đề bài: Sinh cặp khóa RSA + Tạo chứng chỉ X.509 v3 tự ký.
+PKI hierarchy (chỉ 2 tầng, không có Intermediate CA):
 
-Cấu hình các Extensions bắt buộc:
-  - Basic Constraints
-  - Key Usage
-  - Subject Alternative Name (SAN)
-  - CRL Distribution Points
-  - Authority Information Access (OCSP URL)
-
-Hỗ trợ sinh chứng chỉ đã hết hạn (expired=True) để mô phỏng Test Case 2.
+  CA Root  → self-signed, ký server certificate
+  Server   → sinh key pair + CSR, nhận cert từ CA Root
 """
 
 import ipaddress
 from datetime import datetime, timedelta, timezone
 
 from cryptography import x509
-from cryptography.x509.oid import NameOID, AuthorityInformationAccessOID
+from cryptography.x509.oid import NameOID, AuthorityInformationAccessOID, ExtensionOID
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
 
 def generate_rsa_keypair(key_size: int = 2048):
-    """Sinh cặp khóa RSA (Public/Private)."""
-    private_key = rsa.generate_private_key(
+    """Sinh cặp khóa RSA (trả về private key, public key nằm bên trong)."""
+    return rsa.generate_private_key(
         public_exponent=65537,
         key_size=key_size,
     )
-    return private_key
 
 
-def _build_san_list(names):
-    """Chuyển danh sách tên (DNS hoặc IP) thành các GeneralName cho SAN."""
-    san = []
-    for name in names:
-        try:
-            ip = ipaddress.ip_address(name)
-            san.append(x509.IPAddress(ip))
-        except ValueError:
-            san.append(x509.DNSName(name))
-    return san
-
-
-def create_self_signed_cert(
-    private_key,
-    common_name: str = "localhost",
-    dns_names=None,
-    ocsp_url: str = "http://localhost:8888/ocsp",
-    crl_url: str = "http://localhost:8889/crl.pem",
-    validity_days: int = 365,
-    expired: bool = False,
+def generate_ca_root_cert(
+    ca_key,
+    common_name: str = "X509 Simulation Root CA",
+    validity_days: int = 3650,
 ):
-    """
-    Tạo một chứng chỉ X.509 v3 tự ký.
-
-    Tham số:
-        private_key  : khóa RSA để ký (đồng thời là khóa của subject vì self-signed).
-        common_name  : CN trong Subject / Issuer.
-        dns_names    : list các SAN (DNS name hoặc IP).
-        ocsp_url     : URL dịch vụ OCSP sẽ được nhúng vào AIA extension.
-        crl_url      : URL đến file CRL sẽ được nhúng vào CRL Distribution Points.
-        validity_days: thời hạn hiệu lực (ngày).
-        expired      : True -> tạo chứng chỉ đã hết hạn (để test case 2).
-
-    Trả về: (certificate, serial_number)
-    """
-    if dns_names is None:
-        dns_names = ["localhost", "127.0.0.1"]
-
-    # Với Self-signed: Issuer == Subject
+    """Tạo chứng chỉ CA Root tự ký (self-signed)."""
     subject = issuer = x509.Name([
         x509.NameAttribute(NameOID.COUNTRY_NAME, "VN"),
         x509.NameAttribute(NameOID.STATE_OR_PROVINCE_NAME, "HCM"),
@@ -79,34 +39,21 @@ def create_self_signed_cert(
     ])
 
     now = datetime.now(timezone.utc)
-    if expired:
-        # Nằm trong quá khứ: từ 30 ngày trước đến 1 ngày trước -> đã hết hạn
-        not_before = now - timedelta(days=30)
-        not_after = now - timedelta(days=1)
-    else:
-        # Còn hiệu lực bình thường
-        not_before = now - timedelta(minutes=1)
-        not_after = now + timedelta(days=validity_days)
-
     serial_number = x509.random_serial_number()
 
     builder = (
         x509.CertificateBuilder()
         .subject_name(subject)
         .issuer_name(issuer)
-        .public_key(private_key.public_key())
+        .public_key(ca_key.public_key())
         .serial_number(serial_number)
-        .not_valid_before(not_before)
-        .not_valid_after(not_after)
-        # --- Extensions quan trọng theo yêu cầu ---
-        .add_extension(
-            x509.BasicConstraints(ca=True, path_length=None),
-            critical=True,
-        )
+        .not_valid_before(now - timedelta(minutes=1))
+        .not_valid_after(now + timedelta(days=validity_days))
+        .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
         .add_extension(
             x509.KeyUsage(
                 digital_signature=True,
-                key_encipherment=True,
+                key_encipherment=False,
                 content_commitment=False,
                 data_encipherment=False,
                 key_agreement=False,
@@ -118,9 +65,90 @@ def create_self_signed_cert(
             critical=True,
         )
         .add_extension(
+            x509.SubjectKeyIdentifier.from_public_key(ca_key.public_key()),
+            critical=False,
+        )
+    )
+
+    certificate = builder.sign(private_key=ca_key, algorithm=hashes.SHA256())
+    return certificate, serial_number
+
+
+def generate_csr(server_key, common_name: str = "localhost", dns_names=None):
+    """Server sinh Certificate Signing Request để gửi lên RA/CA."""
+    if dns_names is None:
+        dns_names = ["localhost", "127.0.0.1"]
+
+    subject = x509.Name([
+        x509.NameAttribute(NameOID.COUNTRY_NAME, "VN"),
+        x509.NameAttribute(NameOID.STATE_OR_PROVINCE_NAME, "HCM"),
+        x509.NameAttribute(NameOID.LOCALITY_NAME, "Ho Chi Minh City"),
+        x509.NameAttribute(NameOID.ORGANIZATION_NAME, "X509 Simulation Server"),
+        x509.NameAttribute(NameOID.COMMON_NAME, common_name),
+    ])
+
+    csr = (
+        x509.CertificateSigningRequestBuilder()
+        .subject_name(subject)
+        .add_extension(
             x509.SubjectAlternativeName(_build_san_list(dns_names)),
             critical=False,
         )
+        .sign(server_key, hashes.SHA256())
+    )
+    return csr
+
+
+def ca_sign_csr(
+    csr,
+    ca_cert,
+    ca_key,
+    ocsp_url: str = "http://localhost:8888/ocsp",
+    crl_url: str = "http://localhost:8889/crl.pem",
+    validity_days: int = 365,
+    expired: bool = False,
+):
+    """CA Root ký CSR → trả về (server_certificate, serial_number)."""
+    now = datetime.now(timezone.utc)
+    if expired:
+        not_before = now - timedelta(days=30)
+        not_after = now - timedelta(days=1)
+    else:
+        not_before = now - timedelta(minutes=1)
+        not_after = now + timedelta(days=validity_days)
+
+    serial_number = x509.random_serial_number()
+
+    try:
+        san_ext = csr.extensions.get_extension_for_oid(ExtensionOID.SUBJECT_ALTERNATIVE_NAME)
+        san_value = san_ext.value
+    except x509.ExtensionNotFound:
+        san_value = x509.SubjectAlternativeName(_build_san_list(["localhost", "127.0.0.1"]))
+
+    builder = (
+        x509.CertificateBuilder()
+        .subject_name(csr.subject)
+        .issuer_name(ca_cert.subject)
+        .public_key(csr.public_key())
+        .serial_number(serial_number)
+        .not_valid_before(not_before)
+        .not_valid_after(not_after)
+        .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+        .add_extension(
+            x509.KeyUsage(
+                digital_signature=True,
+                key_encipherment=True,
+                content_commitment=False,
+                data_encipherment=False,
+                key_agreement=False,
+                key_cert_sign=False,
+                crl_sign=False,
+                encipher_only=False,
+                decipher_only=False,
+            ),
+            critical=True,
+        )
+        .add_extension(san_value, critical=False)
         .add_extension(
             x509.CRLDistributionPoints([
                 x509.DistributionPoint(
@@ -142,18 +170,28 @@ def create_self_signed_cert(
             critical=False,
         )
         .add_extension(
-            x509.SubjectKeyIdentifier.from_public_key(private_key.public_key()),
+            x509.SubjectKeyIdentifier.from_public_key(csr.public_key()),
+            critical=False,
+        )
+        .add_extension(
+            x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key()),
             critical=False,
         )
     )
 
-    # Tự ký bằng chính private key
-    certificate = builder.sign(
-        private_key=private_key,
-        algorithm=hashes.SHA256(),
-    )
-
+    certificate = builder.sign(private_key=ca_key, algorithm=hashes.SHA256())
     return certificate, serial_number
+
+
+def _build_san_list(names):
+    san = []
+    for name in names:
+        try:
+            ip = ipaddress.ip_address(name)
+            san.append(x509.IPAddress(ip))
+        except ValueError:
+            san.append(x509.DNSName(name))
+    return san
 
 
 def save_cert_and_key(cert, private_key, cert_path: str, key_path: str):
@@ -168,6 +206,12 @@ def save_cert_and_key(cert, private_key, cert_path: str, key_path: str):
                 encryption_algorithm=serialization.NoEncryption(),
             )
         )
+
+
+def save_cert(cert, cert_path: str):
+    """Lưu chỉ certificate ra file PEM."""
+    with open(cert_path, "wb") as f:
+        f.write(cert.public_bytes(serialization.Encoding.PEM))
 
 
 def load_cert(cert_path: str):
