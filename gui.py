@@ -1,12 +1,13 @@
 """
 gui.py
 ------
-Giao diện Tkinter cho PKI Simulator.
+Dynamic Multi-Server X.509 Demo — Tkinter GUI.
 
-Luồng PKI:
-  CA Root (self-signed) → RA xác thực CSR → CA ký → Server cert
-  Server gửi [CA cert + Server cert] cho Client
-  Client xác thực 5 bước → giao tiếp mã hóa với Server
+Layout:
+  [Cơ sở hạ tầng]  [Thêm Server mới]
+  [Danh sách Server đang chạy — Treeview]
+  [Thông tin cert] | [Log step-by-step]
+  [Banner PASS/FAIL]
 """
 
 import os
@@ -17,52 +18,67 @@ from datetime import datetime
 
 from cryptography import x509
 
-from cert_generator import (
-    generate_rsa_keypair,
-    generate_ca_root_cert,
-    generate_csr,
-    save_cert_and_key,
-    save_cert,
-)
-from ra import process_request
-from crl_manager import build_crl, save_crl, save_revoked_list
-from server import start_cert_server
-from ocsp_server import start_ocsp_server
+from issuer import load_or_create_issuer
+from server_manager import ServerManager, FLAVORS
+from crl_manager import build_and_publish_crl
+from ocsp_server import OCSPHandler, start_ocsp_server
 from crl_server import start_crl_server
-from client import fetch_certificate, verify_certificate_full, send_encrypted_message
+from client import fetch_certificate, verify_certificate_full
 
+# ── Đường dẫn và cổng mặc định ───────────────────────────────────────────────
+CERT_DIR      = "certs"
+ISSUER_CERT   = os.path.join(CERT_DIR, "issuer.crt")
+ISSUER_KEY    = os.path.join(CERT_DIR, "issuer.key")
+CRL_PATH      = os.path.join(CERT_DIR, "crl.pem")
+OCSP_DB_PATH  = os.path.join(CERT_DIR, "ocsp_db.json")
 
-# ---- Cấu hình đường dẫn & cổng ----
-CERT_DIR = "certs"
-CA_CERT_PATH = os.path.join(CERT_DIR, "ca.crt")
-CA_KEY_PATH  = os.path.join(CERT_DIR, "ca.key")
-CERT_PATH    = os.path.join(CERT_DIR, "server.crt")
-KEY_PATH     = os.path.join(CERT_DIR, "server.key")
-CRL_PATH     = os.path.join(CERT_DIR, "crl.pem")
-REVOKED_PATH = os.path.join(CERT_DIR, "revoked_serials.json")
+OCSP_PORT = 8888
+CRL_PORT  = 8889
+OCSP_URL  = f"http://localhost:{OCSP_PORT}/ocsp"
+CRL_URL   = f"http://localhost:{CRL_PORT}/crl.pem"
 
-SERVER_HOST = "localhost"
-SERVER_PORT = 9999
-OCSP_PORT   = 8888
-CRL_PORT    = 8889
+FLAVOR_LABELS = {
+    "valid":             "valid — cert hợp lệ",
+    "expired":           "expired — cert hết hạn",
+    "revoked_both":      "revoked_both — CRL + OCSP đều biết",
+    "revoked_ocsp_only": "revoked_ocsp_only — chỉ OCSP biết (CRL chưa publish)",
+    "tampered":          "tampered — cert bị sửa 1 bit",
+}
 
 
 class App:
     def __init__(self, root: tk.Tk):
         self.root = root
-        root.title("X.509 PKI Simulator — CA Root → RA → Server → Client")
-        root.geometry("1180x800")
-        root.minsize(900, 680)
+        root.title("X.509 Dynamic Multi-Server Demo")
+        root.geometry("1280x860")
+        root.minsize(1000, 720)
 
-        self.current_serial = None
-        self.server_started = False
-        self.ocsp_started   = False
-        self.crl_started    = False
+        self.crl_started  = False
+        self.ocsp_started = False
+        self.ocsp_enabled_var = tk.BooleanVar(value=True)
 
         os.makedirs(CERT_DIR, exist_ok=True)
-        self._build_ui()
 
-    # ------------------------------------------------------------------ UI --
+        # Tạo issuer nội bộ (dùng để ký CRL)
+        self.issuer_cert, self.issuer_key = load_or_create_issuer(ISSUER_CERT, ISSUER_KEY)
+
+        # Khởi tạo ServerManager
+        self.mgr = ServerManager(
+            cert_dir=CERT_DIR,
+            ocsp_db_path=OCSP_DB_PATH,
+            crl_path=CRL_PATH,
+            issuer_cert=self.issuer_cert,
+            issuer_key=self.issuer_key,
+            ocsp_url=OCSP_URL,
+            crl_url=CRL_URL,
+            log_callback=self._thread_log,
+        )
+
+        self._build_ui()
+        root.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    # ── Xây dựng giao diện ───────────────────────────────────────────────────
+
     def _build_ui(self):
         style = ttk.Style()
         try:
@@ -70,99 +86,135 @@ class App:
         except Exception:
             pass
 
-        # -- Top control bar --
-        top = ttk.Frame(self.root, padding=10)
+        # ── Hàng trên: Hạ tầng + Thêm server ────────────────────────────────
+        top = ttk.Frame(self.root, padding=8)
         top.pack(fill=tk.X)
 
-        # Cert type selector
-        cert_type_box = ttk.LabelFrame(top, text="Loại certificate muốn tạo", padding=8)
-        cert_type_box.pack(side=tk.LEFT, padx=5, fill=tk.Y)
+        self._build_infra_panel(top)
+        self._build_add_server_panel(top)
 
-        self.scenario_var = tk.StringVar(value="valid")
-        ttk.Radiobutton(
-            cert_type_box, text="1. Chứng chỉ hợp lệ",
-            variable=self.scenario_var, value="valid",
-        ).pack(anchor=tk.W)
-        ttk.Radiobutton(
-            cert_type_box, text="2. Chứng chỉ hết hạn",
-            variable=self.scenario_var, value="expired",
-        ).pack(anchor=tk.W)
-        ttk.Radiobutton(
-            cert_type_box, text="3. Chứng chỉ bị thu hồi",
-            variable=self.scenario_var, value="revoked",
-        ).pack(anchor=tk.W)
+        # ── Danh sách server (Treeview) ───────────────────────────────────────
+        self._build_server_list(self.root)
 
-        # Buttons
-        btn_box = ttk.LabelFrame(top, text="Chức năng", padding=8)
-        btn_box.pack(side=tk.LEFT, padx=5, fill=tk.BOTH, expand=True)
-
-        self.btn_gen = ttk.Button(
-            btn_box, text="① Khởi tạo PKI & Tạo Certificate", command=self.on_generate
-        )
-        self.btn_crl = ttk.Button(
-            btn_box, text="② Start CRL Server", command=self.on_start_crl
-        )
-        self.btn_ocsp = ttk.Button(
-            btn_box, text="③ Start OCSP Server", command=self.on_start_ocsp
-        )
-        self.btn_srv = ttk.Button(
-            btn_box, text="④ Start Server", command=self.on_start_server
-        )
-        self.btn_cli = ttk.Button(
-            btn_box, text="⑤ Connect Client & Verify", command=self.on_connect_client
-        )
-        self.btn_clr = ttk.Button(
-            btn_box, text="Clear Log", command=self.on_clear_log
-        )
-
-        self.btn_gen.grid(row=0, column=0, padx=3, pady=3, sticky="ew")
-        self.btn_crl.grid(row=0, column=1, padx=3, pady=3, sticky="ew")
-        self.btn_ocsp.grid(row=0, column=2, padx=3, pady=3, sticky="ew")
-        self.btn_srv.grid(row=1, column=0, padx=3, pady=3, sticky="ew")
-        self.btn_cli.grid(row=1, column=1, padx=3, pady=3, sticky="ew")
-        self.btn_clr.grid(row=1, column=2, padx=3, pady=3, sticky="ew")
-        for c in range(3):
-            btn_box.columnconfigure(c, weight=1)
-
-        # -- Middle: cert info (left) + log (right) --
-        mid = ttk.Frame(self.root, padding=(10, 0, 10, 10))
+        # ── Cert info + Log ───────────────────────────────────────────────────
+        mid = ttk.Frame(self.root, padding=(8, 0, 8, 0))
         mid.pack(fill=tk.BOTH, expand=True)
 
-        left = ttk.LabelFrame(mid, text="Thông tin chứng chỉ", padding=5)
-        left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 5))
-
+        left = ttk.LabelFrame(mid, text="Thông tin chứng chỉ", padding=4)
+        left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 4))
         self.cert_info = scrolledtext.ScrolledText(
-            left, height=22, font=("Courier New", 9), wrap=tk.WORD
+            left, height=14, font=("Courier New", 8), wrap=tk.WORD
         )
         self.cert_info.pack(fill=tk.BOTH, expand=True)
 
-        right = ttk.LabelFrame(mid, text="Log quá trình (step-by-step)", padding=5)
-        right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(5, 0))
-
+        right = ttk.LabelFrame(mid, text="Log quá trình (step-by-step)", padding=4)
+        right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(4, 0))
         self.log_text = scrolledtext.ScrolledText(
-            right, height=22, font=("Courier New", 9), wrap=tk.WORD
+            right, height=14, font=("Courier New", 8), wrap=tk.WORD
         )
         self.log_text.pack(fill=tk.BOTH, expand=True)
         self.log_text.tag_config("ok",   foreground="#1e8449")
         self.log_text.tag_config("fail", foreground="#c0392b")
         self.log_text.tag_config("info", foreground="#2c3e50")
         self.log_text.tag_config("head", foreground="#2471a3",
-                                 font=("Courier New", 9, "bold"))
+                                 font=("Courier New", 8, "bold"))
 
-        # -- Result banner --
-        self.result_frame = tk.Frame(self.root, height=70, bg="#95a5a6")
-        self.result_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
+        # ── Banner kết quả ────────────────────────────────────────────────────
+        self.result_frame = tk.Frame(self.root, height=60, bg="#95a5a6")
+        self.result_frame.pack(fill=tk.X, padx=8, pady=(4, 8))
         self.result_frame.pack_propagate(False)
-
         self.result_label = tk.Label(
-            self.result_frame,
-            text="Chưa chạy xác thực",
-            bg="#95a5a6", fg="white",
-            font=("Arial", 20, "bold"),
+            self.result_frame, text="Chưa chạy xác thực",
+            bg="#95a5a6", fg="white", font=("Arial", 18, "bold"),
         )
         self.result_label.pack(expand=True, fill=tk.BOTH)
 
-    # --------------------------------------------------------------- Logging
+    def _build_infra_panel(self, parent):
+        box = ttk.LabelFrame(parent, text="Cơ sở hạ tầng", padding=8)
+        box.pack(side=tk.LEFT, padx=(0, 8), fill=tk.Y)
+
+        ttk.Button(box, text="Start CRL Server",
+                   command=self.on_start_crl).grid(row=0, column=0, padx=4, pady=3, sticky="ew")
+        ttk.Button(box, text="Start OCSP Server",
+                   command=self.on_start_ocsp).grid(row=0, column=1, padx=4, pady=3, sticky="ew")
+        ttk.Button(box, text="📢 Publish CRL Now",
+                   command=self.on_publish_crl).grid(row=1, column=0, padx=4, pady=3, sticky="ew")
+        ttk.Button(box, text="Clear Log",
+                   command=self.on_clear_log).grid(row=1, column=1, padx=4, pady=3, sticky="ew")
+
+        chk = ttk.Checkbutton(
+            box, text="OCSP Responder ENABLED",
+            variable=self.ocsp_enabled_var,
+            command=self.on_toggle_ocsp,
+        )
+        chk.grid(row=2, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        box.columnconfigure(0, weight=1)
+        box.columnconfigure(1, weight=1)
+
+    def _build_add_server_panel(self, parent):
+        box = ttk.LabelFrame(parent, text="Thêm Server mới", padding=8)
+        box.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        ttk.Label(box, text="Tên:").grid(row=0, column=0, sticky="e", padx=4)
+        self.entry_name = ttk.Entry(box, width=14)
+        self.entry_name.grid(row=0, column=1, padx=4, pady=3, sticky="ew")
+        self.entry_name.insert(0, "Server-A")
+
+        ttk.Label(box, text="Port:").grid(row=0, column=2, sticky="e", padx=4)
+        self.entry_port = ttk.Entry(box, width=7)
+        self.entry_port.grid(row=0, column=3, padx=4, pady=3)
+        self.entry_port.insert(0, "9001")
+
+        ttk.Label(box, text="Loại cert:").grid(row=1, column=0, sticky="e", padx=4)
+        self.combo_flavor = ttk.Combobox(
+            box,
+            values=list(FLAVOR_LABELS.values()),
+            state="readonly",
+            width=42,
+        )
+        self.combo_flavor.grid(row=1, column=1, columnspan=3, padx=4, pady=3, sticky="ew")
+        self.combo_flavor.current(0)
+
+        ttk.Button(box, text="➕ Thêm Server",
+                   command=self.on_add_server).grid(
+            row=2, column=0, columnspan=4, pady=(6, 2), sticky="ew", padx=4)
+
+        for c in range(4):
+            box.columnconfigure(c, weight=1 if c in (1, 3) else 0)
+
+    def _build_server_list(self, parent):
+        box = ttk.LabelFrame(parent, text="Danh sách Server đang chạy", padding=6)
+        box.pack(fill=tk.X, padx=8, pady=(0, 4))
+
+        # Treeview
+        cols = ("name", "port", "flavor", "serial")
+        self.tree = ttk.Treeview(box, columns=cols, show="headings", height=5)
+        self.tree.heading("name",   text="Tên")
+        self.tree.heading("port",   text="Port")
+        self.tree.heading("flavor", text="Loại cert")
+        self.tree.heading("serial", text="Serial (hex)")
+        self.tree.column("name",   width=110, anchor="center")
+        self.tree.column("port",   width=70,  anchor="center")
+        self.tree.column("flavor", width=230, anchor="w")
+        self.tree.column("serial", width=220, anchor="w")
+
+        vsb = ttk.Scrollbar(box, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=vsb.set)
+        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vsb.pack(side=tk.LEFT, fill=tk.Y)
+
+        # Nút hành động
+        btn_frame = ttk.Frame(box)
+        btn_frame.pack(side=tk.LEFT, padx=(8, 0), anchor="n")
+        ttk.Button(btn_frame, text="🔍 Verify",
+                   command=self.on_verify, width=16).pack(pady=3)
+        ttk.Button(btn_frame, text="🗑 Xóa",
+                   command=self.on_delete, width=16).pack(pady=3)
+        ttk.Button(btn_frame, text="📋 Xem cert",
+                   command=self.on_view_cert, width=16).pack(pady=3)
+
+    # ── Logging & Banner ─────────────────────────────────────────────────────
+
     def log(self, msg: str, tag: str = "info"):
         ts = datetime.now().strftime("%H:%M:%S")
         self.log_text.insert(tk.END, f"[{ts}] {msg}\n", tag)
@@ -173,112 +225,25 @@ class App:
         self.root.after(0, self.log, msg)
 
     def set_result(self, status: str):
-        if status == "pass":
-            color, text = "#27ae60", "✓  PASS — CHỨNG CHỈ HỢP LỆ"
-        elif status == "fail":
-            color, text = "#c0392b", "✗  FAIL — CHỨNG CHỈ KHÔNG HỢP LỆ"
-        else:
-            color, text = "#95a5a6", "Chưa chạy xác thực"
+        mapping = {
+            "pass":  ("#27ae60", "✓  PASS — CHỨNG CHỈ HỢP LỆ"),
+            "fail":  ("#c0392b", "✗  FAIL — CHỨNG CHỈ KHÔNG HỢP LỆ"),
+            "reset": ("#95a5a6", "Chưa chạy xác thực"),
+        }
+        color, text = mapping.get(status, mapping["reset"])
         self.result_frame.config(bg=color)
         self.result_label.config(bg=color, text=text)
 
-    # ----------------------------------------------------------- Button cbs
     def on_clear_log(self):
         self.log_text.delete("1.0", tk.END)
         self.cert_info.delete("1.0", tk.END)
         self.set_result("reset")
 
-    def on_generate(self):
-        cert_type = self.scenario_var.get()
-        self.log(f"► Khởi tạo PKI — loại certificate: {cert_type.upper()}", "head")
-        try:
-            # ── 1. CA Root ──────────────────────────────────────────────────
-            self.log("  [CA Root] Sinh cặp khóa RSA 2048-bit...", "info")
-            ca_key = generate_rsa_keypair()
-            self.log("  [CA Root] Tạo chứng chỉ self-signed...", "info")
-            ca_cert, ca_serial = generate_ca_root_cert(
-                ca_key,
-                common_name="X509 Simulation Root CA",
-            )
-            save_cert_and_key(ca_cert, ca_key, CA_CERT_PATH, CA_KEY_PATH)
-            self.log(f"  ✓ CA Root sẵn sàng (serial={ca_serial})", "ok")
-
-            # ── 2. Server sinh key pair + CSR ────────────────────────────────
-            self.log("  [Server] Sinh cặp khóa RSA 2048-bit...", "info")
-            server_key = generate_rsa_keypair()
-            self.log("  [Server] Tạo CSR (Certificate Signing Request)...", "info")
-            csr = generate_csr(
-                server_key,
-                common_name="localhost",
-                dns_names=["localhost", "127.0.0.1"],
-            )
-            self.log("  ✓ CSR đã tạo, gửi lên RA...", "ok")
-
-            # ── 3. RA xác thực → CA Root ký ─────────────────────────────────
-            expired = (cert_type == "expired")
-            server_cert, server_serial = process_request(
-                csr, ca_cert, ca_key,
-                ocsp_url=f"http://localhost:{OCSP_PORT}/ocsp",
-                crl_url=f"http://localhost:{CRL_PORT}/crl.pem",
-                expired=expired,
-                log_callback=self.log,
-            )
-            save_cert_and_key(server_cert, server_key, CERT_PATH, KEY_PATH)
-            self.log(f"  ✓ Server cert đã lưu (serial={server_serial})", "ok")
-
-            self.current_serial = server_serial
-
-            # ── 4. CRL ──────────────────────────────────────────────────────
-            revoked = [server_serial] if cert_type == "revoked" else []
-            crl = build_crl(ca_cert, ca_key, revoked)
-            save_crl(crl, CRL_PATH)
-            save_revoked_list(revoked, REVOKED_PATH)
-            self.log(
-                f"  ✓ CRL đã sinh ({len(revoked)} serial bị thu hồi)", "ok"
-            )
-
-            self._display_cert_info(server_cert, ca_cert)
-
-        except Exception as e:
-            self.log(f"  ✗ LỖI: {e}", "fail")
-            import traceback
-            traceback.print_exc()
-
-    def _cert_lines(self, cert, label: str) -> list:
-        lines = [f"{'='*10} {label} {'='*10}"]
-        lines.append(f"Version          : {cert.version.name}")
-        lines.append(f"Serial Number    : {cert.serial_number}")
-        lines.append(f"Signature Algo   : {cert.signature_algorithm_oid._name}")
-        lines.append(f"Issuer           : {cert.issuer.rfc4514_string()}")
-        lines.append(f"Subject          : {cert.subject.rfc4514_string()}")
-        try:
-            nb, na = cert.not_valid_before_utc, cert.not_valid_after_utc
-        except AttributeError:
-            nb, na = cert.not_valid_before, cert.not_valid_after
-        lines.append(f"Not Before       : {nb}")
-        lines.append(f"Not After        : {na}")
-        pub = cert.public_key()
-        lines.append(f"Public Key       : RSA {pub.key_size} bits")
-        lines.append("")
-        lines.append("Extensions:")
-        for ext in cert.extensions:
-            lines.append(f"  • {ext.oid._name}  (critical={ext.critical})")
-            lines.append(f"      {ext.value}")
-        return lines
-
-    def _display_cert_info(self, server_cert, ca_cert=None):
-        lines = []
-        if ca_cert is not None:
-            lines += self._cert_lines(ca_cert, "CA Root Certificate")
-            lines.append("")
-        lines += self._cert_lines(server_cert, "Server Certificate")
-        self.cert_info.delete("1.0", tk.END)
-        self.cert_info.insert(tk.END, "\n".join(lines))
+    # ── Hạ tầng ──────────────────────────────────────────────────────────────
 
     def on_start_crl(self):
         if self.crl_started:
-            self.log("[CRL]  Đã chạy rồi, bỏ qua.", "info")
-            return
+            self.log("[CRL] Đã chạy rồi.", "info"); return
         try:
             start_crl_server(
                 host="localhost", port=CRL_PORT,
@@ -286,101 +251,190 @@ class App:
             )
             self.crl_started = True
         except Exception as e:
-            self.log(f"[CRL]  LỖI khi start: {e}", "fail")
+            self.log(f"[CRL] LỖI: {e}", "fail")
 
     def on_start_ocsp(self):
         if self.ocsp_started:
-            self.log("[OCSP] Đã chạy rồi, bỏ qua.", "info")
-            return
+            self.log("[OCSP] Đã chạy rồi.", "info"); return
         try:
             start_ocsp_server(
                 host="localhost", port=OCSP_PORT,
-                revoked_list_path=REVOKED_PATH, log_callback=self._thread_log,
+                revoked_list_path=OCSP_DB_PATH,
+                log_callback=self._thread_log,
             )
             self.ocsp_started = True
         except Exception as e:
-            self.log(f"[OCSP] LỖI khi start: {e}", "fail")
+            self.log(f"[OCSP] LỖI: {e}", "fail")
 
-    def on_start_server(self):
-        if not os.path.exists(CERT_PATH):
-            messagebox.showwarning(
-                "Chưa có chứng chỉ",
-                "Bạn cần bấm ① Khởi tạo PKI & Tạo Certificate trước.",
-            )
-            return
-        if self.server_started:
-            self.log("[Server] Đã chạy rồi, bỏ qua.", "info")
-            return
+    def on_publish_crl(self):
+        """Snapshot OCSP DB → build CRL → ghi ra file."""
         try:
-            start_cert_server(
-                ca_cert_path=CA_CERT_PATH,
-                cert_path=CERT_PATH,
-                key_path=KEY_PATH,
-                host=SERVER_HOST,
-                port=SERVER_PORT,
-                log_callback=self._thread_log,
+            crl = build_and_publish_crl(
+                self.issuer_cert, self.issuer_key,
+                OCSP_DB_PATH, CRL_PATH,
             )
-            self.server_started = True
+            # Đếm số serial trong CRL vừa publish
+            count = sum(1 for _ in crl)
+            self.log(f"[CRL] Đã publish CRL — {count} serial bị thu hồi.", "ok")
         except Exception as e:
-            self.log(f"[Server] LỖI khi start: {e}", "fail")
+            self.log(f"[CRL] LỖI khi publish: {e}", "fail")
 
-    def on_connect_client(self):
-        if not self.server_started:
-            messagebox.showwarning(
-                "Chưa start server",
-                "Hãy start đủ các server (CRL, OCSP, Socket) trước khi verify.",
-            )
+    def on_toggle_ocsp(self):
+        enabled = self.ocsp_enabled_var.get()
+        OCSPHandler.enabled = enabled
+        state = "BẬT" if enabled else "TẮT"
+        tag   = "ok" if enabled else "fail"
+        self.log(f"[OCSP] Responder đã {state}.", tag)
+
+    # ── Thêm / Xóa server ────────────────────────────────────────────────────
+
+    def _parse_flavor_key(self) -> str:
+        """Lấy flavor key từ combo box (ví dụ 'valid' từ 'valid — cert hợp lệ')."""
+        label = self.combo_flavor.get()
+        for key, lbl in FLAVOR_LABELS.items():
+            if lbl == label:
+                return key
+        return list(FLAVOR_LABELS.keys())[0]
+
+    def on_add_server(self):
+        name   = self.entry_name.get().strip()
+        flavor = self._parse_flavor_key()
+
+        if not name:
+            messagebox.showerror("Lỗi", "Tên server không được để trống.")
             return
-        threading.Thread(target=self._do_verify, daemon=True).start()
-
-    def _do_verify(self):
         try:
-            # ── Lấy certificate chain từ server ─────────────────────────────
-            self._thread_log("► Client kết nối Server để nhận certificate chain...")
-            ca_pem, server_pem = fetch_certificate(SERVER_HOST, SERVER_PORT)
+            port = int(self.entry_port.get().strip())
+            if not (1024 <= port <= 65535):
+                raise ValueError
+        except ValueError:
+            messagebox.showerror("Lỗi", "Port phải là số nguyên từ 1024 đến 65535.")
+            return
+
+        try:
+            entry = self.mgr.add_server(name, port, flavor)
+        except (ValueError, OSError) as e:
+            messagebox.showerror("Lỗi", str(e))
+            return
+
+        self.tree.insert(
+            "", tk.END, iid=name,
+            values=(name, port, flavor, f"{entry.serial:#x}"),
+        )
+        self.log(f"[+] '{name}' port={port} flavor={flavor} serial={entry.serial:#x}", "ok")
+
+        # Gợi ý port tiếp theo
+        try:
+            self.entry_port.delete(0, tk.END)
+            self.entry_port.insert(0, str(port + 1))
+        except Exception:
+            pass
+
+    def on_delete(self):
+        sel = self.tree.selection()
+        if not sel:
+            messagebox.showwarning("Chưa chọn", "Hãy chọn server cần xóa trong bảng.")
+            return
+        name = sel[0]
+        if not messagebox.askyesno("Xác nhận", f"Xóa server '{name}'?"):
+            return
+        self.mgr.remove_server(name)
+        self.tree.delete(name)
+        self.log(f"[-] Server '{name}' đã xóa.", "info")
+
+    # ── Verify ────────────────────────────────────────────────────────────────
+
+    def on_verify(self):
+        sel = self.tree.selection()
+        if not sel:
+            messagebox.showwarning("Chưa chọn", "Hãy chọn server cần verify trong bảng.")
+            return
+        name  = sel[0]
+        entry = self.mgr.servers.get(name)
+        if entry is None:
+            return
+        self.set_result("reset")
+        threading.Thread(target=self._do_verify, args=(entry,), daemon=True).start()
+
+    def _do_verify(self, entry):
+        host = "localhost"
+        try:
             self._thread_log(
-                f"  ✓ Nhận CA cert ({len(ca_pem)} B) + Server cert ({len(server_pem)} B)"
+                f"► Verify '{entry.name}' (port={entry.port}, flavor={entry.flavor})"
             )
-
-            # Hiển thị cert info trên main thread
-            ca_cert_obj     = x509.load_pem_x509_certificate(ca_pem)
-            server_cert_obj = x509.load_pem_x509_certificate(server_pem)
-            self.root.after(0, self._display_cert_info, server_cert_obj, ca_cert_obj)
-
+            cert_bytes = fetch_certificate(host, entry.port)
+            self._thread_log(f"  ✓ Nhận {len(cert_bytes)} bytes PEM từ server.")
             self._thread_log("")
-            self._thread_log("╔══════ BẮT ĐẦU QUY TRÌNH XÁC THỰC 5 BƯỚC ══════╗")
+            self._thread_log("╔══════ BẮT ĐẦU 5 BƯỚC XÁC THỰC ══════╗")
 
-            overall, results, server_cert, _ = verify_certificate_full(
-                ca_pem, server_pem, SERVER_HOST, log_callback=self._thread_log
+            overall, results, cert_obj = verify_certificate_full(
+                cert_bytes, host, log_callback=self._thread_log
             )
 
-            self._thread_log("╚══════════════ KẾT QUẢ TỔNG HỢP ══════════════╝")
-            for name, ok, _msg in results:
-                tag = "PASS" if ok else "FAIL"
-                self._thread_log(f"   [{tag}] {name}")
+            self._thread_log("╚══════════════ KẾT QUẢ ══════════════╝")
+            for step_name, ok, _ in results:
+                self._thread_log(f"   [{'PASS' if ok else 'FAIL'}] {step_name}")
 
             self.root.after(0, self.set_result, "pass" if overall else "fail")
-
-            # ── Giao tiếp mã hóa nếu chứng chỉ hợp lệ ──────────────────────
-            if overall:
-                self._thread_log("")
-                self._thread_log("╔══════ GIAO TIẾP MÃ HÓA CLIENT ↔ SERVER ══════╗")
-                msg_plain = "Xin chào Server! Chứng chỉ đã xác thực thành công."
-                self._thread_log(
-                    f"[Client] Mã hóa tin nhắn bằng public key của Server (RSA-OAEP)..."
-                )
-                self._thread_log(f"[Client] Nội dung gốc: '{msg_plain}'")
-                response = send_encrypted_message(
-                    SERVER_HOST, SERVER_PORT, msg_plain, server_cert
-                )
-                self._thread_log(f"[Client] Phản hồi từ Server: '{response}'")
-                self._thread_log("╚═══════════════════════════════════════════════╝")
+            self.root.after(0, self._display_cert, cert_obj, entry)
 
         except Exception as e:
-            self._thread_log(f"  ✗ LỖI: {e}")
-            import traceback
-            traceback.print_exc()
+            self._thread_log(f"  ✗ LỖI kết nối: {e}")
             self.root.after(0, self.set_result, "fail")
+
+    # ── Xem cert ──────────────────────────────────────────────────────────────
+
+    def on_view_cert(self):
+        sel = self.tree.selection()
+        if not sel:
+            messagebox.showwarning("Chưa chọn", "Hãy chọn server trong bảng.")
+            return
+        name  = sel[0]
+        entry = self.mgr.servers.get(name)
+        if entry is None:
+            return
+        try:
+            with open(entry.cert_path, "rb") as f:
+                cert_pem = f.read()
+            cert_obj = x509.load_pem_x509_certificate(cert_pem)
+            self._display_cert(cert_obj, entry)
+        except Exception as e:
+            self.log(f"Lỗi xem cert '{name}': {e}", "fail")
+
+    def _display_cert(self, cert, entry):
+        """Hiển thị thông tin chi tiết cert vào panel bên trái."""
+        lines = []
+        lines.append(f"Server  : {entry.name}  (port {entry.port})")
+        lines.append(f"Flavor  : {entry.flavor}")
+        lines.append("")
+        lines.append(f"Version          : {cert.version.name}")
+        lines.append(f"Serial           : {cert.serial_number:#x}")
+        lines.append(f"Signature Algo   : {cert.signature_algorithm_oid._name}")
+        lines.append(f"Issuer           : {cert.issuer.rfc4514_string()}")
+        lines.append(f"Subject          : {cert.subject.rfc4514_string()}")
+        try:
+            nb, na = cert.not_valid_before_utc, cert.not_valid_after_utc
+        except AttributeError:
+            nb = cert.not_valid_before
+            na = cert.not_valid_after
+        lines.append(f"Not Before       : {nb}")
+        lines.append(f"Not After        : {na}")
+        lines.append(f"Public Key       : RSA {cert.public_key().key_size} bits")
+        lines.append("")
+        lines.append("=== Extensions ===")
+        for ext in cert.extensions:
+            lines.append(f"  • {ext.oid._name}  (critical={ext.critical})")
+            lines.append(f"      {ext.value}")
+
+        self.cert_info.delete("1.0", tk.END)
+        self.cert_info.insert(tk.END, "\n".join(lines))
+
+    # ── Đóng cửa sổ ──────────────────────────────────────────────────────────
+
+    def _on_close(self):
+        """Tự động dừng tất cả socket server trước khi thoát."""
+        self.mgr.remove_all()
+        self.root.destroy()
 
 
 def main():

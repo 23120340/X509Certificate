@@ -1,14 +1,12 @@
 """
 ocsp_server.py
 --------------
-Phần 5 của đề bài: Dịch vụ OCSP kiểm tra trạng thái chứng chỉ qua HTTP đơn giản.
+OCSP Responder đơn giản qua HTTP GET.
 
-Endpoint:
-    GET /ocsp?serial=<serial_number>
+Endpoint: GET /ocsp?serial=<int>
+Response: {"serial": "...", "status": "GOOD" | "REVOKED"}
 
-Response (JSON):
-    {"serial": "...", "status": "GOOD"}    -> Chứng chỉ hợp lệ
-    {"serial": "...", "status": "REVOKED"} -> Chứng chỉ đã bị thu hồi
+Khi OCSPHandler.enabled = False, server trả 503 để mô phỏng OCSP down.
 """
 
 import json
@@ -20,11 +18,23 @@ from crl_manager import load_revoked_list
 
 
 class OCSPHandler(BaseHTTPRequestHandler):
-    # Đường dẫn file revoked list - được set từ start_ocsp_server
-    revoked_list_path = "certs/revoked_serials.json"
+    revoked_list_path = "certs/ocsp_db.json"
     log_callback = None
+    enabled = True          # False → giả lập OCSP responder bị tắt / lỗi mạng
 
     def do_GET(self):
+        # Mô phỏng OCSP down khi disabled
+        if not OCSPHandler.enabled:
+            body = b'{"error": "OCSP responder temporarily unavailable"}'
+            self.send_response(503)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            if OCSPHandler.log_callback:
+                OCSPHandler.log_callback("[OCSP] Responder DISABLED — trả 503")
+            return
+
         parsed = urlparse(self.path)
         if parsed.path != "/ocsp":
             self.send_response(404)
@@ -47,9 +57,7 @@ class OCSPHandler(BaseHTTPRequestHandler):
         status = "REVOKED" if serial_int in revoked else "GOOD"
 
         if OCSPHandler.log_callback:
-            OCSPHandler.log_callback(
-                f"[OCSP] Query serial={serial_int} -> {status}"
-            )
+            OCSPHandler.log_callback(f"[OCSP] serial={serial_int} → {status}")
 
         self._json(200, {"serial": str(serial_int), "status": status})
 
@@ -62,17 +70,16 @@ class OCSPHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def log_message(self, format, *args):
-        # Suppress default stderr logging
         return
 
 
 def start_ocsp_server(
     host: str = "localhost",
     port: int = 8888,
-    revoked_list_path: str = "certs/revoked_serials.json",
+    revoked_list_path: str = "certs/ocsp_db.json",
     log_callback=None,
 ):
-    """Khởi động OCSP server ở background thread, trả về instance HTTPServer."""
+    """Khởi động OCSP server ở background thread. Trả về HTTPServer instance."""
     OCSPHandler.revoked_list_path = revoked_list_path
     OCSPHandler.log_callback = log_callback
 
