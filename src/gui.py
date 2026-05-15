@@ -367,8 +367,11 @@ class App:
             self._thread_log(
                 f"► Verify '{entry.name}' (port={entry.port}, flavor={entry.flavor})"
             )
-            cert_bytes = fetch_certificate(host, entry.port)
-            self._thread_log(f"  ✓ Nhận {len(cert_bytes)} bytes PEM từ server.")
+            cert_bytes, peer_address = fetch_certificate(host, entry.port)
+            self._thread_log(
+                f"  ✓ Nhận {len(cert_bytes)} bytes PEM từ server "
+                f"(peer={peer_address})."
+            )
             self._thread_log("")
             self._thread_log("╔══════ BẮT ĐẦU 5 BƯỚC XÁC THỰC ══════╗")
 
@@ -376,6 +379,7 @@ class App:
                 cert_bytes, host,
                 trust_store_dir=self.trust_store_dir,
                 log_callback=self._thread_log,
+                peer_address=peer_address,
             )
 
             self._thread_log("╚══════════════ KẾT QUẢ ══════════════╝")
@@ -439,8 +443,13 @@ class App:
     # ── Đóng cửa sổ ──────────────────────────────────────────────────────────
 
     def _on_close(self):
-        """Tự động dừng tất cả socket server trước khi thoát."""
-        self.mgr.remove_all()
+        """
+        Đóng app: chỉ dừng socket, KHÔNG xóa cert file. Mục đích là để lần
+        khởi động sau, cert/key của các 'valid' server còn trên disk và
+        ServerManager có thể reuse → pin warning của client ổn định qua
+        các lần mở/đóng GUI.
+        """
+        self.mgr.remove_all(cleanup_files=False)
         self.root.destroy()
 
 

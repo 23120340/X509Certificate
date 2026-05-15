@@ -1,8 +1,8 @@
 # Hệ thống mô phỏng xác thực chứng chỉ X.509 v3 (Root CA + Trust Store)
 
-Bài tập mô phỏng quá trình một client xác thực chứng chỉ X.509 v3 do **Root CA** ký, bao gồm 5 bước: verify chữ ký bằng Root CA trong Trust Store, kiểm tra thời hạn, kiểm tra hostname (SAN), kiểm tra CRL và gọi OCSP.
+Bài tập mô phỏng quá trình một client xác thực chứng chỉ X.509 v3 do **Root CA** ký, gồm 5 bước: verify chữ ký bằng Root CA trong Trust Store, kiểm tra thời hạn, kiểm tra hostname (SAN), kiểm tra CRL và gọi OCSP.
 
-Phiên bản hiện tại là demo **Dynamic Multi-Server**: có thể tạo nhiều socket server cùng lúc, mỗi server dùng một loại chứng chỉ khác nhau để đối chiếu kết quả PASS/FAIL.
+Phiên bản hiện tại là demo **Dynamic Multi-Server**: có thể tạo nhiều socket server cùng lúc, mỗi server dùng một loại chứng chỉ khác nhau để đối chiếu kết quả PASS/FAIL. Ngoài 5 bước chính, client còn lưu lại cert nhận được vào `received_certs/<hostname>/` kèm metadata (peer_address, fingerprint, …) và một bước phụ **pin warning** theo cơ chế TOFU (Trust On First Use) — cảnh báo nếu fingerprint của cert đổi giữa các lần kết nối.
 
 ## Mô hình tin cậy
 
@@ -26,24 +26,36 @@ Demo bỏ qua chain trung gian (không có Intermediate CA) nhưng giữ đúng 
 
 ```text
 X509Certificate/
-├── cert_generator.py   # Sinh key; tạo server cert do Root CA ký
-├── issuer.py           # Root CA (self-signed) + Trust Store helper
-├── client.py           # Client thực hiện 5 bước xác thực
-├── crl_manager.py      # Quản lý OCSP DB và publish CRL (Root CA ký)
-├── crl_server.py       # HTTP server phát file CRL
-├── ocsp_server.py      # HTTP OCSP service (GOOD/REVOKED hoặc 503 khi tắt)
-├── server_manager.py   # Quản lý nhiều socket server demo
-├── gui.py              # Tkinter GUI
-├── main.py             # Điểm vào
-├── test_scenarios.py   # Test end-to-end cho các kịch bản demo
+├── main.py                 # Điểm vào — thêm src/ vào sys.path rồi gọi gui.main()
 ├── requirements.txt
-└── certs/              # Được tự tạo khi chạy
-    ├── issuer.crt          # Root CA cert (issuer)
-    ├── issuer.key          # Root CA private key
-    ├── crl.pem             # CRL do Root CA ký
-    ├── ocsp_db.json        # Realtime revocation DB của OCSP responder
-    └── trust_store/
-        └── root_ca.crt     # Bản sao Root CA — client đọc khi verify
+├── README.md
+├── .gitignore
+├── docs/
+│   └── DEMO_SCRIPT.md      # Kịch bản trình bày trước thầy
+├── src/                    # Toàn bộ source code
+│   ├── cert_generator.py   # Sinh key; tạo server cert do Root CA ký
+│   ├── issuer.py           # Root CA (self-signed) + Trust Store helper
+│   ├── client.py           # Client 5 bước xác thực + pin warning + lưu cert
+│   ├── crl_manager.py      # OCSP DB + publish CRL (Root CA ký)
+│   ├── crl_server.py       # HTTP server phát file CRL
+│   ├── ocsp_server.py      # HTTP OCSP service (GOOD/REVOKED hoặc 503 khi tắt)
+│   ├── server_manager.py   # Quản lý nhiều socket server demo
+│   └── gui.py              # Tkinter GUI
+├── tests/
+│   └── test_scenarios.py   # Test end-to-end các kịch bản demo
+├── certs/                  # Runtime — tự tạo khi chạy GUI (gitignored)
+│   ├── issuer.crt              # Root CA cert
+│   ├── issuer.key              # Root CA private key
+│   ├── crl.pem                 # CRL do Root CA ký
+│   ├── ocsp_db.json            # Realtime revocation DB của OCSP responder
+│   ├── <ServerName>.crt|.key   # Cert/key của các server đang chạy
+│   └── trust_store/
+│       └── root_ca.crt         # Bản sao Root CA — client đọc khi verify
+└── received_certs/         # Runtime — client lưu cert nhận được (gitignored)
+    └── <hostname>/
+        ├── <timestamp>_<fp8>.pem    # PEM nhận được
+        ├── <timestamp>_<fp8>.json   # Metadata: hostname, peer_address, fingerprint, …
+        └── pin.json                 # Fingerprint đã pin cho hostname này (TOFU)
 ```
 
 ## Cài đặt
@@ -60,11 +72,13 @@ Tkinter có sẵn trong Python standard library trên hầu hết các bản cà
 python main.py
 ```
 
-Nếu console Windows bị lỗi in tiếng Việt khi chạy test, dùng:
+Chạy từ thư mục gốc project. `main.py` tự thêm `src/` vào `sys.path` nên các module trong `src/` import được nhau bình thường.
+
+Chạy test end-to-end:
 
 ```powershell
 $env:PYTHONIOENCODING='utf-8'
-python test_scenarios.py
+python tests/test_scenarios.py
 ```
 
 ## Quy trình thao tác trên GUI
@@ -82,7 +96,7 @@ Nút **Publish CRL Now** tạo lại `crl.pem` từ snapshot hiện tại của 
 
 | Loại cert | Ý nghĩa | Kết quả mong đợi |
 |-----------|---------|------------------|
-| `valid` | Cert hợp lệ, do Root CA ký, chưa bị revoke | **PASS** tất cả 5 bước |
+| `valid` | Cert hợp lệ, do Root CA ký, chưa bị revoke. Reuse file trên disk nếu còn hợp lệ → pin warning của client ổn định qua các lần khởi động GUI | **PASS** tất cả 5 bước |
 | `expired` | Cert đã hết hạn | **FAIL** ở Bước 2 |
 | `revoked_both` | Serial đã có trong OCSP DB và CRL đã publish | **FAIL** ở Bước 4 và Bước 5 |
 | `revoked_ocsp_only` | Serial chỉ có trong OCSP DB, CRL chưa publish | **FAIL** ở Bước 5, Bước 4 vẫn PASS cho đến khi publish CRL |
@@ -109,8 +123,13 @@ Nút **Publish CRL Now** tạo lại `crl.pem` từ snapshot hiện tại của 
 | 4 | CRL | Đọc `CRL Distribution Points`, tải `crl.pem` qua HTTP, verify chữ ký CRL bằng Root CA, sau đó check serial |
 | 5 | OCSP | Đọc `Authority Information Access`, gọi `GET /ocsp?serial=...`, kiểm tra JSON `status` |
 
+Sau 5 bước chính, client chạy thêm **bước phụ (advisory)** — KHÔNG ảnh hưởng PASS/FAIL tổng:
+
+- **Lưu cert**: ghi PEM nhận được vào `received_certs/<hostname>/<timestamp>_<fp8>.pem` kèm `.json` metadata (`hostname`, `peer_address` = IP:port thực sự đã kết nối, `fingerprint_sha256`, `serial_number`, `subject`, `issuer`, …). Hữu ích cho audit: nếu thấy `hostname=foo.com` nhưng `peer_address` ngoài dải mong đợi → dấu hiệu DNS poisoning.
+- **Pin warning (TOFU)**: lần đầu kết nối một hostname → lưu fingerprint vào `pin.json`; lần sau so sánh fingerprint mới với pin cũ. Mismatch → cảnh báo (cert có thể được rotate hợp lệ, hoặc đang bị MITM). Pin KHÔNG tự cập nhật khi mismatch — user phải xóa `pin.json` để chấp nhận cert mới.
+
 Lưu ý:
-- OCSP responder trong demo trả về JSON dạng `{"serial":"...","status":"GOOD"}` thay vì ASN.1 OCSP response chuẩn để dễ quan sát. Mục tiêu là mô phỏng logic kiểm tra trạng thái online, không triển khai đầy đủ chuẩn OCSP binary.
+- OCSP responder trong demo trả JSON `{"serial":"...","status":"GOOD"}` thay vì ASN.1 OCSP response chuẩn để dễ quan sát. Mục tiêu là mô phỏng logic kiểm tra trạng thái online, không triển khai đầy đủ chuẩn OCSP binary.
 - Server cert mới được đặt `BasicConstraints(ca=False)` và `ExtendedKeyUsage = serverAuth` để giống vai trò TLS server cert thực tế (dù demo không chạy TLS thật).
 
 ## Giao thức giữa các thành phần

@@ -10,22 +10,29 @@ self-signed. Mô hình tin cậy:
     Client  ──verify chữ ký bằng Root CA public key trong Trust Store──►
 
 Flavors:
-  valid            – cert hợp lệ, Root CA ký đúng
-  expired          – cert đã hết hạn (backdate)
-  revoked_both     – revoked trong cả OCSP DB lẫn CRL (publish ngay)
-  revoked_ocsp_only– chỉ có trong OCSP DB, CRL chưa cập nhật
-  tampered         – cert bị lật 1 bit sau khi Root CA ký → chữ ký sai
+  valid            – cert hợp lệ, Root CA ký đúng. NẾU file cert/key trên
+                     disk đã tồn tại và còn hợp lệ (issuer khớp Root CA hiện
+                     tại + chưa hết hạn) → reuse để pin warning của client
+                     ổn định qua các lần khởi động lại GUI.
+  expired          – cert đã hết hạn (backdate); luôn sinh mới mỗi lần.
+  revoked_both     – revoked trong cả OCSP DB lẫn CRL (publish ngay); sinh mới.
+  revoked_ocsp_only– chỉ có trong OCSP DB, CRL chưa cập nhật; sinh mới.
+  tampered         – cert bị lật 1 bit sau khi Root CA ký → chữ ký sai;
+                     sinh mới để tamper lại từ đầu.
 """
 
 import os
 import socket
 import threading
+from datetime import datetime, timezone
 
 from cert_generator import (
     generate_rsa_keypair,
     create_server_cert_signed_by_ca,
     save_cert_and_key,
     tamper_cert_pem,
+    load_cert,
+    load_private_key,
 )
 from crl_manager import (
     revoke_serial_ocsp_only,
@@ -81,6 +88,45 @@ class ServerManager:
         if self.log_callback:
             self.log_callback(msg)
 
+    # ── Reuse cert đã lưu (chỉ dùng cho flavor 'valid') ──────────────────────
+
+    def _try_reuse_valid_cert(self, name: str, cert_path: str, key_path: str):
+        """
+        Thử load cert/key đã có trên disk cho flavor 'valid'.
+
+        Reuse được khi: file tồn tại, parse được, issuer khớp Root CA hiện tại,
+        và cert còn trong thời hạn. Mục đích: pin warning ổn định qua các lần
+        khởi động lại GUI (cùng tên server → cùng fingerprint → pin match).
+
+        Trả về (cert, key, serial) nếu reuse được, None nếu cần sinh mới.
+        """
+        if not (os.path.exists(cert_path) and os.path.exists(key_path)):
+            return None
+        try:
+            cert = load_cert(cert_path)
+            key = load_private_key(key_path)
+        except Exception as e:
+            self._log(
+                f"[ServerMgr] '{name}' — không load được cert/key cũ ({e}); sinh mới"
+            )
+            return None
+
+        if cert.issuer != self.issuer_cert.subject:
+            self._log(
+                f"[ServerMgr] '{name}' — cert cũ có issuer khác Root CA hiện tại; sinh mới"
+            )
+            return None
+
+        try:
+            na = cert.not_valid_after_utc
+        except AttributeError:
+            na = cert.not_valid_after.replace(tzinfo=timezone.utc)
+        if datetime.now(timezone.utc) >= na:
+            self._log(f"[ServerMgr] '{name}' — cert cũ đã hết hạn; sinh mới")
+            return None
+
+        return cert, key, cert.serial_number
+
     # ── Thêm server ──────────────────────────────────────────────────────────
 
     def add_server(self, name: str, port: int, flavor: str) -> ServerEntry:
@@ -99,24 +145,35 @@ class ServerManager:
         cert_path = os.path.join(self.cert_dir, f"{name}.crt")
         key_path  = os.path.join(self.cert_dir, f"{name}.key")
 
-        # 1. Sinh cặp khóa rồi để Root CA ký server cert
-        key = generate_rsa_keypair()
-        expired = (flavor == "expired")
-        cert, serial = create_server_cert_signed_by_ca(
-            server_private_key=key,
-            ca_cert=self.issuer_cert,
-            ca_private_key=self.issuer_key,
-            common_name="localhost",
-            dns_names=["localhost", "127.0.0.1"],
-            ocsp_url=self.ocsp_url,
-            crl_url=self.crl_url,
-            expired=expired,
-        )
-        save_cert_and_key(cert, key, cert_path, key_path)
-        self._log(
-            f"[ServerMgr] '{name}' — server cert đã được Root CA ký "
-            f"(serial={serial:#x})"
-        )
+        # 1. Sinh cert (hoặc reuse với flavor 'valid' nếu file cũ còn dùng được)
+        reused = None
+        if flavor == "valid":
+            reused = self._try_reuse_valid_cert(name, cert_path, key_path)
+
+        if reused is not None:
+            cert, key, serial = reused
+            self._log(
+                f"[ServerMgr] '{name}' — REUSE cert/key trên disk "
+                f"(serial={serial:#x}); pin sẽ ổn định qua các lần Thêm Server"
+            )
+        else:
+            key = generate_rsa_keypair()
+            expired = (flavor == "expired")
+            cert, serial = create_server_cert_signed_by_ca(
+                server_private_key=key,
+                ca_cert=self.issuer_cert,
+                ca_private_key=self.issuer_key,
+                common_name="localhost",
+                dns_names=["localhost", "127.0.0.1"],
+                ocsp_url=self.ocsp_url,
+                crl_url=self.crl_url,
+                expired=expired,
+            )
+            save_cert_and_key(cert, key, cert_path, key_path)
+            self._log(
+                f"[ServerMgr] '{name}' — server cert đã được Root CA ký "
+                f"(serial={serial:#x})"
+            )
 
         # 2. Xử lý revocation theo flavor
         if flavor == "revoked_ocsp_only":
@@ -151,13 +208,18 @@ class ServerManager:
 
     # ── Xóa server ───────────────────────────────────────────────────────────
 
-    def remove_server(self, name: str):
-        """Dừng socket server, xóa cert file, rollback revocation state."""
+    def remove_server(self, name: str, cleanup_files: bool = True):
+        """
+        Dừng socket server. Nếu `cleanup_files=True` (mặc định, dùng khi user
+        bấm Xóa): xóa cert file + rollback revocation. Nếu `False` (dùng khi
+        app đóng): chỉ stop socket, giữ nguyên file để lần khởi động sau
+        có thể reuse (xem `_try_reuse_valid_cert`).
+        """
         entry = self.servers.pop(name, None)
         if entry is None:
             return
 
-        # Dừng socket server
+        # Luôn luôn dừng socket server
         if entry.stop_flag:
             entry.stop_flag["stop"] = True
         if entry.sock:
@@ -165,6 +227,10 @@ class ServerManager:
                 entry.sock.close()
             except Exception:
                 pass
+
+        if not cleanup_files:
+            self._log(f"[ServerMgr] '{name}' — socket dừng, giữ file cho lần sau")
+            return
 
         # Rollback revocation (xóa khỏi OCSP DB)
         if entry.flavor in ("revoked_both", "revoked_ocsp_only"):
@@ -180,10 +246,13 @@ class ServerManager:
 
         self._log(f"[ServerMgr] '{name}' đã xóa.")
 
-    def remove_all(self):
-        """Dừng tất cả server (dùng khi đóng ứng dụng)."""
+    def remove_all(self, cleanup_files: bool = True):
+        """
+        Dừng tất cả server. `cleanup_files=False` khi đóng app → giữ file để
+        lần sau reuse.
+        """
         for name in list(self.servers.keys()):
-            self.remove_server(name)
+            self.remove_server(name, cleanup_files=cleanup_files)
 
     # ── Socket server nội bộ ─────────────────────────────────────────────────
 

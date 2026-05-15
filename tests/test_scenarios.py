@@ -3,8 +3,8 @@ test_scenarios.py
 -----------------
 End-to-end automated tests cho 7 hành vi demo (a-i).
 
-Chạy:
-    python test_scenarios.py
+Chạy (từ project root):
+    python tests/test_scenarios.py
 
 Tất cả tests phải PASS trước khi demo cho thầy.
 
@@ -15,9 +15,14 @@ import os
 import shutil
 import sys
 import time
+from pathlib import Path
+
+# Cho phép import từ src/ dù chạy từ project root hay từ tests/
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_PROJECT_ROOT / "src"))
 
 # ── Cấu hình test (port riêng biệt) ──────────────────────────────────────────
-TEST_DIR      = "certs_test"
+TEST_DIR      = str(_PROJECT_ROOT / "certs_test")
 TEST_CRL_PORT = 18889
 TEST_OCSP_PORT = 18888
 TEST_CRL_URL  = f"http://localhost:{TEST_CRL_PORT}/crl.pem"
@@ -97,10 +102,11 @@ def teardown():
 
 def _verify(port) -> tuple:
     """Lấy cert từ port và chạy 5 bước. Trả về (overall, results)."""
-    cert_bytes = fetch_certificate("localhost", port)
+    cert_bytes, peer_address = fetch_certificate("localhost", port)
     overall, results, _ = verify_certificate_full(
         cert_bytes, "localhost",
         trust_store_dir=TEST_TRUST_STORE,
+        peer_address=peer_address,
     )
     return overall, results
 
