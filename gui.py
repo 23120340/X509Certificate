@@ -18,7 +18,7 @@ from datetime import datetime
 
 from cryptography import x509
 
-from issuer import load_or_create_issuer
+from issuer import load_or_create_issuer, publish_root_ca_to_trust_store
 from server_manager import ServerManager, FLAVORS
 from crl_manager import build_and_publish_crl
 from ocsp_server import OCSPHandler, start_ocsp_server
@@ -26,11 +26,12 @@ from crl_server import start_crl_server
 from client import fetch_certificate, verify_certificate_full
 
 # ── Đường dẫn và cổng mặc định ───────────────────────────────────────────────
-CERT_DIR      = "certs"
-ISSUER_CERT   = os.path.join(CERT_DIR, "issuer.crt")
-ISSUER_KEY    = os.path.join(CERT_DIR, "issuer.key")
-CRL_PATH      = os.path.join(CERT_DIR, "crl.pem")
-OCSP_DB_PATH  = os.path.join(CERT_DIR, "ocsp_db.json")
+CERT_DIR        = "certs"
+ISSUER_CERT     = os.path.join(CERT_DIR, "issuer.crt")
+ISSUER_KEY      = os.path.join(CERT_DIR, "issuer.key")
+CRL_PATH        = os.path.join(CERT_DIR, "crl.pem")
+OCSP_DB_PATH    = os.path.join(CERT_DIR, "ocsp_db.json")
+TRUST_STORE_DIR = os.path.join(CERT_DIR, "trust_store")
 
 OCSP_PORT = 8888
 CRL_PORT  = 8889
@@ -59,8 +60,12 @@ class App:
 
         os.makedirs(CERT_DIR, exist_ok=True)
 
-        # Tạo issuer nội bộ (dùng để ký CRL)
+        # Tạo Root CA (issuer): ký server cert + ký CRL
         self.issuer_cert, self.issuer_key = load_or_create_issuer(ISSUER_CERT, ISSUER_KEY)
+
+        # Publish Root CA vào Trust Store để client load khi verify
+        self.trust_store_dir = TRUST_STORE_DIR
+        publish_root_ca_to_trust_store(self.issuer_cert, self.trust_store_dir)
 
         # Khởi tạo ServerManager
         self.mgr = ServerManager(
@@ -368,7 +373,9 @@ class App:
             self._thread_log("╔══════ BẮT ĐẦU 5 BƯỚC XÁC THỰC ══════╗")
 
             overall, results, cert_obj = verify_certificate_full(
-                cert_bytes, host, log_callback=self._thread_log
+                cert_bytes, host,
+                trust_store_dir=self.trust_store_dir,
+                log_callback=self._thread_log,
             )
 
             self._thread_log("╚══════════════ KẾT QUẢ ══════════════╝")

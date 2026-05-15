@@ -26,11 +26,12 @@ TEST_CRL_PATH = os.path.join(TEST_DIR, "crl.pem")
 TEST_OCSP_DB  = os.path.join(TEST_DIR, "ocsp_db.json")
 TEST_ISSUER_CERT = os.path.join(TEST_DIR, "issuer.crt")
 TEST_ISSUER_KEY  = os.path.join(TEST_DIR, "issuer.key")
+TEST_TRUST_STORE = os.path.join(TEST_DIR, "trust_store")
 
 BASE_PORT = 19001  # server test dùng port 19001, 19002, ...
 
 # ── Imports sau khi định nghĩa hằng để không side-effect ─────────────────────
-from issuer import load_or_create_issuer
+from issuer import load_or_create_issuer, publish_root_ca_to_trust_store
 from server_manager import ServerManager
 from crl_manager import build_and_publish_crl
 from ocsp_server import OCSPHandler, start_ocsp_server
@@ -56,6 +57,9 @@ def setup():
     os.makedirs(TEST_DIR, exist_ok=True)
 
     issuer_cert, issuer_key = load_or_create_issuer(TEST_ISSUER_CERT, TEST_ISSUER_KEY)
+
+    # Publish Root CA cert vào Trust Store của test client
+    publish_root_ca_to_trust_store(issuer_cert, TEST_TRUST_STORE)
 
     # Khởi động CRL server
     start_crl_server(
@@ -94,7 +98,10 @@ def teardown():
 def _verify(port) -> tuple:
     """Lấy cert từ port và chạy 5 bước. Trả về (overall, results)."""
     cert_bytes = fetch_certificate("localhost", port)
-    overall, results, _ = verify_certificate_full(cert_bytes, "localhost")
+    overall, results, _ = verify_certificate_full(
+        cert_bytes, "localhost",
+        trust_store_dir=TEST_TRUST_STORE,
+    )
     return overall, results
 
 

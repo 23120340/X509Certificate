@@ -3,12 +3,18 @@ server_manager.py
 -----------------
 Quản lý nhiều socket server đồng thời, mỗi server phục vụ 1 loại cert.
 
+Mỗi server cert được Root CA (issuer của ServerManager) ký, không còn
+self-signed. Mô hình tin cậy:
+
+    Root CA  ──ký──► Server cert  (issuer = Root CA subject)
+    Client  ──verify chữ ký bằng Root CA public key trong Trust Store──►
+
 Flavors:
-  valid            – cert hợp lệ
+  valid            – cert hợp lệ, Root CA ký đúng
   expired          – cert đã hết hạn (backdate)
   revoked_both     – revoked trong cả OCSP DB lẫn CRL (publish ngay)
   revoked_ocsp_only– chỉ có trong OCSP DB, CRL chưa cập nhật
-  tampered         – cert bị lật 1 bit sau khi ký → chữ ký sai
+  tampered         – cert bị lật 1 bit sau khi Root CA ký → chữ ký sai
 """
 
 import os
@@ -17,7 +23,7 @@ import threading
 
 from cert_generator import (
     generate_rsa_keypair,
-    create_self_signed_cert,
+    create_server_cert_signed_by_ca,
     save_cert_and_key,
     tamper_cert_pem,
 )
@@ -93,11 +99,13 @@ class ServerManager:
         cert_path = os.path.join(self.cert_dir, f"{name}.crt")
         key_path  = os.path.join(self.cert_dir, f"{name}.key")
 
-        # 1. Sinh cặp khóa + cert self-signed
+        # 1. Sinh cặp khóa rồi để Root CA ký server cert
         key = generate_rsa_keypair()
         expired = (flavor == "expired")
-        cert, serial = create_self_signed_cert(
-            key,
+        cert, serial = create_server_cert_signed_by_ca(
+            server_private_key=key,
+            ca_cert=self.issuer_cert,
+            ca_private_key=self.issuer_key,
             common_name="localhost",
             dns_names=["localhost", "127.0.0.1"],
             ocsp_url=self.ocsp_url,
@@ -105,7 +113,10 @@ class ServerManager:
             expired=expired,
         )
         save_cert_and_key(cert, key, cert_path, key_path)
-        self._log(f"[ServerMgr] '{name}' — cert sinh xong (serial={serial:#x})")
+        self._log(
+            f"[ServerMgr] '{name}' — server cert đã được Root CA ký "
+            f"(serial={serial:#x})"
+        )
 
         # 2. Xử lý revocation theo flavor
         if flavor == "revoked_ocsp_only":

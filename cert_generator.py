@@ -1,10 +1,16 @@
 """
 cert_generator.py
 -----------------
-Sinh cặp khóa RSA + tạo chứng chỉ X.509 v3 self-signed cho từng server.
+Sinh cặp khóa RSA + tạo chứng chỉ X.509 v3.
 
-Mỗi server tự ký cert bằng private key của chính nó
-(issuer == subject, signature dùng server's own key).
+Có hai chế độ tạo cert:
+
+  1. create_self_signed_cert(...)            – cert tự ký (giữ cho khả năng demo
+                                                cũ hoặc các test legacy).
+  2. create_server_cert_signed_by_ca(...)    – cert SERVER được Root CA ký.
+                                                Đây là cách dùng chính của demo
+                                                sau khi nâng cấp theo mô hình
+                                                Root CA + Trust Store.
 """
 
 import base64
@@ -12,7 +18,7 @@ import ipaddress
 from datetime import datetime, timedelta, timezone
 
 from cryptography import x509
-from cryptography.x509.oid import NameOID, AuthorityInformationAccessOID
+from cryptography.x509.oid import NameOID, AuthorityInformationAccessOID, ExtendedKeyUsageOID
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
@@ -20,6 +26,111 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 def generate_rsa_keypair(key_size: int = 2048):
     """Sinh cặp khóa RSA. Trả về private key (public key nằm bên trong)."""
     return rsa.generate_private_key(public_exponent=65537, key_size=key_size)
+
+
+def _server_subject(common_name: str) -> x509.Name:
+    return x509.Name([
+        x509.NameAttribute(NameOID.COUNTRY_NAME, "VN"),
+        x509.NameAttribute(NameOID.STATE_OR_PROVINCE_NAME, "HCM"),
+        x509.NameAttribute(NameOID.LOCALITY_NAME, "Ho Chi Minh City"),
+        x509.NameAttribute(NameOID.ORGANIZATION_NAME, "X509 Demo"),
+        x509.NameAttribute(NameOID.COMMON_NAME, common_name),
+    ])
+
+
+def create_server_cert_signed_by_ca(
+    server_private_key,
+    ca_cert,
+    ca_private_key,
+    common_name: str = "localhost",
+    dns_names=None,
+    ocsp_url: str = "http://localhost:8888/ocsp",
+    crl_url: str = "http://localhost:8889/crl.pem",
+    validity_days: int = 365,
+    expired: bool = False,
+):
+    """
+    Tạo chứng chỉ X.509 v3 cho server, KÝ bằng Root CA.
+
+    issuer = ca_cert.subject
+    subject = CN=<common_name>
+    Chữ ký được tạo bằng ca_private_key của Root CA.
+
+    Server cert KHÔNG còn là CA: BasicConstraints(ca=False).
+    Thêm Extended Key Usage = serverAuth cho đúng vai trò TLS server cert.
+    """
+    if dns_names is None:
+        dns_names = ["localhost", "127.0.0.1"]
+
+    subject = _server_subject(common_name)
+    issuer = ca_cert.subject
+
+    now = datetime.now(timezone.utc)
+    if expired:
+        not_before = now - timedelta(days=30)
+        not_after  = now - timedelta(days=1)
+    else:
+        not_before = now - timedelta(minutes=1)
+        not_after  = now + timedelta(days=validity_days)
+
+    serial_number = x509.random_serial_number()
+
+    builder = (
+        x509.CertificateBuilder()
+        .subject_name(subject)
+        .issuer_name(issuer)
+        .public_key(server_private_key.public_key())
+        .serial_number(serial_number)
+        .not_valid_before(not_before)
+        .not_valid_after(not_after)
+        .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+        .add_extension(
+            x509.KeyUsage(
+                digital_signature=True, key_encipherment=True,
+                content_commitment=False, data_encipherment=False,
+                key_agreement=False, key_cert_sign=False, crl_sign=False,
+                encipher_only=False, decipher_only=False,
+            ),
+            critical=True,
+        )
+        .add_extension(
+            x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]),
+            critical=False,
+        )
+        .add_extension(
+            x509.SubjectAlternativeName(_build_san_list(dns_names)),
+            critical=False,
+        )
+        .add_extension(
+            x509.CRLDistributionPoints([
+                x509.DistributionPoint(
+                    full_name=[x509.UniformResourceIdentifier(crl_url)],
+                    relative_name=None, reasons=None, crl_issuer=None,
+                )
+            ]),
+            critical=False,
+        )
+        .add_extension(
+            x509.AuthorityInformationAccess([
+                x509.AccessDescription(
+                    access_method=AuthorityInformationAccessOID.OCSP,
+                    access_location=x509.UniformResourceIdentifier(ocsp_url),
+                )
+            ]),
+            critical=False,
+        )
+        .add_extension(
+            x509.SubjectKeyIdentifier.from_public_key(server_private_key.public_key()),
+            critical=False,
+        )
+        .add_extension(
+            x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_cert.public_key()),
+            critical=False,
+        )
+    )
+
+    certificate = builder.sign(private_key=ca_private_key, algorithm=hashes.SHA256())
+    return certificate, serial_number
 
 
 def create_self_signed_cert(
@@ -32,19 +143,14 @@ def create_self_signed_cert(
     expired: bool = False,
 ):
     """
-    Tạo chứng chỉ X.509 v3 self-signed.
-    issuer == subject, cert được ký bằng chính private_key truyền vào.
+    LEGACY: Tạo chứng chỉ X.509 v3 self-signed (issuer == subject).
+    Giữ lại cho các test legacy. Demo chính dùng
+    `create_server_cert_signed_by_ca`.
     """
     if dns_names is None:
         dns_names = ["localhost", "127.0.0.1"]
 
-    subject = issuer = x509.Name([
-        x509.NameAttribute(NameOID.COUNTRY_NAME, "VN"),
-        x509.NameAttribute(NameOID.STATE_OR_PROVINCE_NAME, "HCM"),
-        x509.NameAttribute(NameOID.LOCALITY_NAME, "Ho Chi Minh City"),
-        x509.NameAttribute(NameOID.ORGANIZATION_NAME, "X509 Demo"),
-        x509.NameAttribute(NameOID.COMMON_NAME, common_name),
-    ])
+    subject = issuer = _server_subject(common_name)
 
     now = datetime.now(timezone.utc)
     if expired:

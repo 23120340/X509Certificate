@@ -1,25 +1,49 @@
-# Hệ thống mô phỏng xác thực chứng chỉ X.509 v3 (Self-signed)
+# Hệ thống mô phỏng xác thực chứng chỉ X.509 v3 (Root CA + Trust Store)
 
-Bài tập mô phỏng quá trình một HTTPS client xác thực chứng chỉ X.509 v3 tự ký, bao gồm đầy đủ các bước: verify chữ ký, kiểm tra thời hạn, kiểm tra hostname (SAN), kiểm tra CRL, và gọi OCSP.
+Bài tập mô phỏng quá trình một client xác thực chứng chỉ X.509 v3 do **Root CA** ký, bao gồm 5 bước: verify chữ ký bằng Root CA trong Trust Store, kiểm tra thời hạn, kiểm tra hostname (SAN), kiểm tra CRL và gọi OCSP.
+
+Phiên bản hiện tại là demo **Dynamic Multi-Server**: có thể tạo nhiều socket server cùng lúc, mỗi server dùng một loại chứng chỉ khác nhau để đối chiếu kết quả PASS/FAIL.
+
+## Mô hình tin cậy
+
+```text
+Root CA (self-signed)
+    │
+    ├── ký Server Certificate    (issuer = Root CA subject)
+    └── ký CRL                   (CRL issuer = Root CA subject)
+
+Trust Store của client
+    └── chứa Root CA certificate
+
+Client verify:
+    server_cert.signature  ──verify bằng──►  Root CA public key (trong Trust Store)
+    crl.signature          ──verify bằng──►  Root CA public key (trong Trust Store)
+```
+
+Demo bỏ qua chain trung gian (không có Intermediate CA) nhưng giữ đúng ý tưởng Root CA + Trust Store của X.509.
 
 ## Cấu trúc project
 
-```
-x509_sim/
-├── cert_generator.py   # Phần 1: Sinh key + tạo cert X.509 v3 self-signed
-├── server.py           # Phần 2: Socket server gửi cert cho client
-├── client.py           # Phần 3: Client thực hiện 5 bước xác thực
-├── crl_manager.py      # Phần 4: Tạo CRL
+```text
+X509Certificate/
+├── cert_generator.py   # Sinh key; tạo server cert do Root CA ký
+├── issuer.py           # Root CA (self-signed) + Trust Store helper
+├── client.py           # Client thực hiện 5 bước xác thực
+├── crl_manager.py      # Quản lý OCSP DB và publish CRL (Root CA ký)
 ├── crl_server.py       # HTTP server phát file CRL
-├── ocsp_server.py      # Phần 5: HTTP OCSP service (GOOD/REVOKED)
-├── gui.py              # Phần 6: Tkinter GUI
+├── ocsp_server.py      # HTTP OCSP service (GOOD/REVOKED hoặc 503 khi tắt)
+├── server_manager.py   # Quản lý nhiều socket server demo
+├── gui.py              # Tkinter GUI
 ├── main.py             # Điểm vào
+├── test_scenarios.py   # Test end-to-end cho các kịch bản demo
 ├── requirements.txt
 └── certs/              # Được tự tạo khi chạy
-    ├── server.crt
-    ├── server.key
-    ├── crl.pem
-    └── revoked_serials.json
+    ├── issuer.crt          # Root CA cert (issuer)
+    ├── issuer.key          # Root CA private key
+    ├── crl.pem             # CRL do Root CA ký
+    ├── ocsp_db.json        # Realtime revocation DB của OCSP responder
+    └── trust_store/
+        └── root_ca.crt     # Bản sao Root CA — client đọc khi verify
 ```
 
 ## Cài đặt
@@ -28,7 +52,7 @@ x509_sim/
 pip install -r requirements.txt
 ```
 
-(Tkinter có sẵn trong Python standard library trên hầu hết các bản cài đặt.)
+Tkinter có sẵn trong Python standard library trên hầu hết các bản cài đặt Python desktop.
 
 ## Chạy chương trình
 
@@ -36,45 +60,67 @@ pip install -r requirements.txt
 python main.py
 ```
 
+Nếu console Windows bị lỗi in tiếng Việt khi chạy test, dùng:
+
+```powershell
+$env:PYTHONIOENCODING='utf-8'
+python test_scenarios.py
+```
+
 ## Quy trình thao tác trên GUI
 
-Theo thứ tự các nút đánh số:
+1. Bấm **Start CRL Server** để mở HTTP CRL server ở cổng `8889`.
+2. Bấm **Start OCSP Server** để mở OCSP responder ở cổng `8888`.
+3. Trong khung **Thêm Server mới**, nhập tên, port và chọn loại chứng chỉ.
+4. Bấm **Thêm Server** để sinh cert (Root CA ký) và mở socket server tương ứng.
+5. Chọn server trong bảng, bấm **Verify** để client nhận cert và chạy 5 bước xác thực.
+6. Xem kết quả PASS/FAIL ở banner dưới cùng và log chi tiết bên phải.
 
-1. **Chọn kịch bản** ở bên trái (Valid / Expired / Revoked).
-2. **① Generate Certificate** – sinh cặp khóa RSA + cert X.509 v3 + CRL tương ứng.
-3. **② Start CRL Server** – mở HTTP server phát `crl.pem` (cổng 8889).
-4. **③ Start OCSP Server** – mở HTTP OCSP service (cổng 8888).
-5. **④ Start Server** – mở Socket server phát certificate (cổng 9999).
-6. **⑤ Connect Client & Verify** – Client kết nối, nhận cert, chạy 5 bước xác thực.
+Nút **Publish CRL Now** tạo lại `crl.pem` từ snapshot hiện tại của `ocsp_db.json`. Đây là điểm quan trọng để demo độ trễ của CRL so với OCSP.
 
-Kết quả PASS/FAIL hiện ở thanh banner dưới cùng (xanh / đỏ).
+## Các loại server demo
 
-## 3 kịch bản kiểm thử
+| Loại cert | Ý nghĩa | Kết quả mong đợi |
+|-----------|---------|------------------|
+| `valid` | Cert hợp lệ, do Root CA ký, chưa bị revoke | **PASS** tất cả 5 bước |
+| `expired` | Cert đã hết hạn | **FAIL** ở Bước 2 |
+| `revoked_both` | Serial đã có trong OCSP DB và CRL đã publish | **FAIL** ở Bước 4 và Bước 5 |
+| `revoked_ocsp_only` | Serial chỉ có trong OCSP DB, CRL chưa publish | **FAIL** ở Bước 5, Bước 4 vẫn PASS cho đến khi publish CRL |
+| `tampered` | Cert bị sửa 1 bit sau khi Root CA ký | **FAIL** ở Bước 1 |
 
-| STT | Kịch bản                     | Cách test                            | Kết quả mong đợi |
-|-----|------------------------------|--------------------------------------|------------------|
-| 1   | Chứng chỉ hợp lệ             | Chọn "Valid", bấm ①→⑤                | **PASS** (xanh)  |
-| 2   | Chứng chỉ hết hạn            | Chọn "Expired", bấm ①→⑤              | **FAIL** (đỏ)   – Bước 2 fail |
-| 3   | Chứng chỉ bị thu hồi         | Chọn "Revoked", bấm ①→⑤              | **FAIL** (đỏ)   – Bước 4 & 5 fail |
+## Kịch bản demo khuyến nghị
 
-## Chi tiết các bước xác thực (phía Client)
+1. Tạo `Server-A`, port `9001`, loại `valid` → Verify: PASS (Root CA xác minh chữ ký OK).
+2. Tạo `Server-B`, port `9002`, loại `expired` → Verify: FAIL ở thời hạn (Bước 1 vẫn PASS).
+3. Tạo `Server-C`, port `9003`, loại `revoked_both` → Verify: CRL và OCSP đều báo revoked.
+4. Tạo `Server-D`, port `9004`, loại `revoked_ocsp_only` → Verify: CRL chưa biết, OCSP báo revoked.
+5. Bấm **Publish CRL Now**, verify lại `Server-D` → Bước 4 lúc này cũng FAIL.
+6. Tắt checkbox **OCSP Responder ENABLED**, verify `Server-C` → CRL vẫn bắt được revoked, OCSP trả lỗi 503.
+7. Tạo `Server-E`, port `9005`, loại `tampered` → Verify: chữ ký không verify được bằng Root CA.
+8. Chọn một server và bấm **Xóa** để chứng minh port đóng và cert file bị xóa.
 
-| Bước | Mục tiêu               | Cách kiểm tra |
-|------|------------------------|---------------|
-| 1    | Verify chữ ký số       | Dùng public key trong chính cert (vì là self-signed) để verify signature trên `tbs_certificate_bytes` |
-| 2    | Thời hạn hiệu lực      | So sánh `datetime.now(UTC)` với `not_valid_before` / `not_valid_after` |
-| 3    | Hostname               | Kiểm tra hostname nằm trong `SubjectAlternativeName` (DNSName hoặc IPAddress) |
-| 4    | CRL                    | Đọc `CRL Distribution Points` extension → tải file CRL từ HTTP → check serial |
-| 5    | OCSP                   | Đọc `Authority Information Access` extension → gọi `GET /ocsp?serial=...` → kiểm tra JSON `status` |
+## Chi tiết 5 bước xác thực phía client
+
+| Bước | Mục tiêu | Cách kiểm tra |
+|------|----------|---------------|
+| 1 | Verify chữ ký bằng Root CA | Load Root CA cert từ Trust Store, kiểm tra `server_cert.issuer == root_ca.subject`, dùng Root CA public key verify `tbs_certificate_bytes` |
+| 2 | Thời hạn hiệu lực | So sánh `datetime.now(UTC)` với `not_valid_before` / `not_valid_after` |
+| 3 | Hostname | Kiểm tra hostname nằm trong `SubjectAlternativeName` |
+| 4 | CRL | Đọc `CRL Distribution Points`, tải `crl.pem` qua HTTP, verify chữ ký CRL bằng Root CA, sau đó check serial |
+| 5 | OCSP | Đọc `Authority Information Access`, gọi `GET /ocsp?serial=...`, kiểm tra JSON `status` |
+
+Lưu ý:
+- OCSP responder trong demo trả về JSON dạng `{"serial":"...","status":"GOOD"}` thay vì ASN.1 OCSP response chuẩn để dễ quan sát. Mục tiêu là mô phỏng logic kiểm tra trạng thái online, không triển khai đầy đủ chuẩn OCSP binary.
+- Server cert mới được đặt `BasicConstraints(ca=False)` và `ExtendedKeyUsage = serverAuth` để giống vai trò TLS server cert thực tế (dù demo không chạy TLS thật).
 
 ## Giao thức giữa các thành phần
 
-- **Client ↔ Server (Socket)** – cổng 9999
+- **Client ↔ Socket server**
   - Client gửi: `b"GET_CERT"`
-  - Server đáp: `[4 bytes length big-endian][PEM bytes]`
+  - Server đáp: `[4 bytes length big-endian][PEM bytes của server cert]`
 
-- **Client → OCSP (HTTP)** – cổng 8888
+- **Client → OCSP**
   - `GET /ocsp?serial=<serial>` → `{"serial":"...","status":"GOOD"|"REVOKED"}`
 
-- **Client → CRL (HTTP)** – cổng 8889
-  - `GET /crl.pem` → nội dung CRL PEM chuẩn X.509
+- **Client → CRL**
+  - `GET /crl.pem` → nội dung CRL PEM chuẩn X.509 (do Root CA ký)
