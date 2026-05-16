@@ -1,7 +1,7 @@
 """
-issuer.py
----------
-Root CA của demo.
+core/ca.py
+----------
+Root CA của hệ thống (load/create + Trust Store helper).
 
 Trong mô hình mới (sau khi nâng cấp theo X509_DEMO_REVIEW.md):
 

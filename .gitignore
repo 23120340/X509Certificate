@@ -11,6 +11,23 @@ certs/
 certs_test/
 received_certs/
 
+# M1+ CA app artifacts
+ca_app.db
+ca_app.db-journal
+ca_app.db-wal
+ca_app.db-shm
+master.key
+m1test_*/
+m4test_*/
+m5test_*/
+m6test_*/
+m7test_*/
+m8test_*/
+m9test_*/
+
+# Backup snapshots — contain master.key + DB, sensitive
+backups/
+
 # IDE / OS
 .vscode/
 .idea/

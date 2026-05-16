@@ -1,6 +1,6 @@
 """
-server_manager.py
------------------
+legacy/server_manager.py
+------------------------
 Quản lý nhiều socket server đồng thời, mỗi server phục vụ 1 loại cert.
 
 Mỗi server cert được Root CA (issuer của ServerManager) ký, không còn
@@ -9,16 +9,26 @@ self-signed. Mô hình tin cậy:
     Root CA  ──ký──► Server cert  (issuer = Root CA subject)
     Client  ──verify chữ ký bằng Root CA public key trong Trust Store──►
 
-Flavors:
-  valid            – cert hợp lệ, Root CA ký đúng. NẾU file cert/key trên
-                     disk đã tồn tại và còn hợp lệ (issuer khớp Root CA hiện
-                     tại + chưa hết hạn) → reuse để pin warning của client
-                     ổn định qua các lần khởi động lại GUI.
-  expired          – cert đã hết hạn (backdate); luôn sinh mới mỗi lần.
-  revoked_both     – revoked trong cả OCSP DB lẫn CRL (publish ngay); sinh mới.
-  revoked_ocsp_only– chỉ có trong OCSP DB, CRL chưa cập nhật; sinh mới.
-  tampered         – cert bị lật 1 bit sau khi Root CA ký → chữ ký sai;
-                     sinh mới để tamper lại từ đầu.
+Mô hình trạng thái (mỗi server có 3 trục độc lập):
+  lifecycle         – trạng thái pháp lý của cert
+                      • valid    – còn trong thời hạn, chưa revoke
+                      • expired  – đã quá Not After
+                      • revoked  – đã có trong CRL/OCSP DB
+  revocation_scope  – chỉ áp dụng khi lifecycle=revoked
+                      • none, ocsp_only, both
+  wire_mutation     – mutation áp lên blob khi server gửi cho client
+                      • none, tampered
+
+`flavor` là "trạng thái khởi tạo" (immutable, set một lần ở add_server),
+còn `lifecycle/revocation_scope/wire_mutation` là trạng thái runtime
+(mutable, có thể đổi qua các method state-transition như renew_server).
+
+Flavors → state ban đầu:
+  valid              → (valid,   none,      none)
+  expired            → (expired, none,      none)
+  revoked_both       → (revoked, both,      none)
+  revoked_ocsp_only  → (revoked, ocsp_only, none)
+  tampered           → (valid,   none,      tampered)
 """
 
 import os
@@ -26,7 +36,7 @@ import socket
 import threading
 from datetime import datetime, timezone
 
-from cert_generator import (
+from core.cert_builder import (
     generate_rsa_keypair,
     create_server_cert_signed_by_ca,
     save_cert_and_key,
@@ -34,7 +44,7 @@ from cert_generator import (
     load_cert,
     load_private_key,
 )
-from crl_manager import (
+from core.crl import (
     revoke_serial_ocsp_only,
     build_and_publish_crl,
     unrevoke_serial,
@@ -42,18 +52,52 @@ from crl_manager import (
 
 FLAVORS = ("valid", "expired", "revoked_both", "revoked_ocsp_only", "tampered")
 
+# Trục trạng thái runtime
+LIFECYCLE_STATES   = ("valid", "expired", "revoked")
+REVOCATION_SCOPES  = ("none", "ocsp_only", "both")
+WIRE_MUTATIONS     = ("none", "tampered")
+
+# Mapping flavor (state khởi tạo) → (lifecycle, revocation_scope, wire_mutation)
+FLAVOR_TO_STATE = {
+    "valid":             ("valid",   "none",      "none"),
+    "expired":           ("expired", "none",      "none"),
+    "revoked_both":      ("revoked", "both",      "none"),
+    "revoked_ocsp_only": ("revoked", "ocsp_only", "none"),
+    "tampered":          ("valid",   "none",      "tampered"),
+}
+
+# Ngưỡng "chuẩn bị hết hạn" mặc định cho is_renewal_due
+DEFAULT_RENEWAL_THRESHOLD_SECONDS = 30 * 86400  # 30 ngày
+
 
 class ServerEntry:
-    """Thông tin của 1 server instance đang chạy."""
+    """Thông tin của 1 server instance đang chạy.
+
+    `flavor` là state khởi tạo (immutable). Trạng thái runtime hiện tại nằm
+    ở `lifecycle / revocation_scope / wire_mutation` — các method state-
+    transition (vd: `renew_server`) sửa các field này, KHÔNG sửa `flavor`.
+
+    `previous_serials` ghi lại serial của những cert đã bị thay thế qua các
+    lần renew, dùng cho audit ("server này từng có serial X, đã rotate sang Y").
+    """
     def __init__(self, name, port, flavor, serial, cert_path, key_path):
         self.name      = name
         self.port      = port
-        self.flavor    = flavor
-        self.serial    = serial
-        self.cert_path = cert_path   # file cert PEM (có thể đã tamper)
+        self.flavor    = flavor              # initial flavor (immutable)
+        self.serial    = serial              # serial của cert hiện đang serve
+        self.cert_path = cert_path           # file cert PEM (có thể đã tamper)
         self.key_path  = key_path
-        self.sock      = None        # server socket
-        self.stop_flag = None        # {"stop": bool}
+        self.sock      = None                # server socket
+        self.stop_flag = None                # {"stop": bool}
+
+        # Trạng thái runtime (mutable). Khởi tạo từ flavor.
+        lifecycle, scope, mutation = FLAVOR_TO_STATE[flavor]
+        self.lifecycle: str        = lifecycle
+        self.revocation_scope: str = scope
+        self.wire_mutation: str    = mutation
+
+        # Audit: serial của các cert đã bị thay thế qua renew (oldest → newest)
+        self.previous_serials: list[int] = []
 
 
 class ServerManager:
@@ -253,6 +297,124 @@ class ServerManager:
         """
         for name in list(self.servers.keys()):
             self.remove_server(name, cleanup_files=cleanup_files)
+
+    # ── Renew / lifecycle transition ─────────────────────────────────────────
+
+    def is_renewal_due(
+        self,
+        name: str,
+        threshold_seconds: float = DEFAULT_RENEWAL_THRESHOLD_SECONDS,
+    ) -> bool:
+        """
+        Trả về True nếu cert hiện tại của server `name` còn lại < threshold
+        thời gian, hoặc đã hết hạn (lifecycle=expired). Dùng để bật/disable
+        nút Renew trên GUI hoặc làm trigger cho auto-renew job.
+
+        Trả về False nếu server không tồn tại, không load được cert, hay
+        wire_mutation=tampered (cert đã hỏng, không phải bài toán renew).
+        """
+        entry = self.servers.get(name)
+        if entry is None:
+            return False
+        if entry.wire_mutation == "tampered":
+            return False
+        try:
+            cert = load_cert(entry.cert_path)
+        except Exception:
+            return False
+        try:
+            na = cert.not_valid_after_utc
+        except AttributeError:
+            na = cert.not_valid_after.replace(tzinfo=timezone.utc)
+        remaining = (na - datetime.now(timezone.utc)).total_seconds()
+        return remaining < threshold_seconds
+
+    def renew_server(
+        self,
+        name: str,
+        rotate_key: bool = True,
+        validity_days: int = 365,
+    ) -> "ServerEntry":
+        """
+        Sinh cert MỚI (Root CA ký, không expired), ghi đè file cert/key của
+        server đang chạy. Socket vẫn giữ — lần GET_CERT kế tiếp client nhận
+        được cert mới, fingerprint sẽ khác → client-side pin store xử lý
+        rotation (xem `check_pinned` trong client.py).
+
+        Tham số:
+          rotate_key=True   → sinh keypair MỚI (best-practice, mặc định)
+                              False → tái dùng key cũ (chỉ rotate cert).
+          validity_days     → thời hạn cert mới (mặc định 365).
+
+        Ràng buộc:
+          - Không renew khi wire_mutation=tampered (cần untamper trước —
+            chưa implement, raise ValueError).
+          - Chưa implement renew cho lifecycle=revoked (cần unrevoke trước —
+            chưa implement, raise NotImplementedError).
+
+        Trả về ServerEntry đã cập nhật. Sau khi gọi:
+          entry.lifecycle = "valid"
+          entry.serial    = serial mới
+          entry.previous_serials += [serial cũ]
+          entry.flavor    GIỮ NGUYÊN (đại diện initial state)
+        """
+        entry = self.servers.get(name)
+        if entry is None:
+            raise ValueError(f"Server '{name}' không tồn tại.")
+        if entry.wire_mutation == "tampered":
+            raise ValueError(
+                f"Server '{name}' đang ở wire_mutation=tampered — renew không "
+                f"có ý nghĩa cho cert đã bị giả mạo. Untamper trước."
+            )
+        if entry.lifecycle == "revoked":
+            raise NotImplementedError(
+                f"Server '{name}' đang lifecycle=revoked — renew flow cho "
+                f"revoked chưa làm. Cần unrevoke trước (chưa implement)."
+            )
+
+        old_serial = entry.serial
+
+        # 1. Key: rotate (mới) hoặc giữ key cũ
+        if rotate_key:
+            key = generate_rsa_keypair()
+        else:
+            try:
+                key = load_private_key(entry.key_path)
+            except Exception as e:
+                raise RuntimeError(
+                    f"Không load được key cũ tại {entry.key_path}: {e}"
+                ) from e
+
+        # 2. Sinh cert mới (KHÔNG expired), ký bởi Root CA
+        cert, new_serial = create_server_cert_signed_by_ca(
+            server_private_key=key,
+            ca_cert=self.issuer_cert,
+            ca_private_key=self.issuer_key,
+            common_name="localhost",
+            dns_names=["localhost", "127.0.0.1"],
+            ocsp_url=self.ocsp_url,
+            crl_url=self.crl_url,
+            validity_days=validity_days,
+            expired=False,
+        )
+
+        # 3. Ghi đè file. Nếu không rotate key thì cũng ghi đè lại key cho
+        #    tường minh — load_private_key trả về cùng object thôi.
+        save_cert_and_key(cert, key, entry.cert_path, entry.key_path)
+
+        # 4. Cập nhật runtime state. Lưu ý: KHÔNG đổi entry.flavor.
+        entry.previous_serials.append(old_serial)
+        entry.serial    = new_serial
+        entry.lifecycle = "valid"
+
+        self._log(
+            f"[ServerMgr] '{name}' — RENEW thành công "
+            f"({'rotate key' if rotate_key else 'giữ key cũ'}); "
+            f"serial cũ={old_serial:#x} → mới={new_serial:#x}; "
+            f"hiệu lực {validity_days} ngày. "
+            f"Client sẽ thấy fingerprint khác lần GET_CERT tiếp theo."
+        )
+        return entry
 
     # ── Socket server nội bộ ─────────────────────────────────────────────────
 

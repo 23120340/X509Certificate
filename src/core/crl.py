@@ -1,6 +1,6 @@
 """
-crl_manager.py
---------------
+core/crl.py
+-----------
 Quản lý Certificate Revocation List (CRL) và OCSP database.
 
 Hai nguồn sự thật tách biệt:

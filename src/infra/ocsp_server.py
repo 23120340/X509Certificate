@@ -1,6 +1,6 @@
 """
-ocsp_server.py
---------------
+infra/ocsp_server.py
+--------------------
 OCSP Responder đơn giản qua HTTP GET.
 
 Endpoint: GET /ocsp?serial=<int>
@@ -14,7 +14,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse, parse_qs
 
-from crl_manager import load_revoked_list
+from core.crl import load_revoked_list
 
 
 class OCSPHandler(BaseHTTPRequestHandler):

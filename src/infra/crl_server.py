@@ -1,6 +1,6 @@
 """
-crl_server.py
--------------
+infra/crl_server.py
+-------------------
 HTTP server đơn giản để phát file CRL (để Client tải về và đối chiếu),
 tương ứng với URL được nhúng trong CRL Distribution Points extension.
 """

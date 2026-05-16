@@ -1,6 +1,6 @@
 """
-cert_generator.py
------------------
+core/cert_builder.py
+--------------------
 Sinh cặp khóa RSA + tạo chứng chỉ X.509 v3.
 
 Có hai chế độ tạo cert:
@@ -227,6 +227,155 @@ def tamper_cert_pem(pem_bytes: bytes) -> bytes:
     new_b64 = base64.b64encode(bytes(der)).decode()
     wrapped = "\n".join(new_b64[i:i+64] for i in range(0, len(new_b64), 64))
     return f"-----BEGIN CERTIFICATE-----\n{wrapped}\n-----END CERTIFICATE-----\n".encode()
+
+
+def _build_end_entity_cert(
+    subject_name,
+    public_key,
+    san_value,
+    ca_cert,
+    ca_private_key,
+    validity_days: int,
+    ocsp_url: str,
+    crl_url: str,
+):
+    """
+    Internal helper — build cert end-entity với 1 cấu hình extensions cố định
+    (TLS server cert). Dùng chung cho `issue_cert_from_csr` (M6) và
+    `reissue_cert_for_renewal` (M7).
+
+      • subject_name   = x509.Name (subject của cert)
+      • public_key     = key sẽ được embed vào cert
+      • san_value      = x509.SubjectAlternativeName hoặc None
+      • ca_cert/ca_key = Root CA (signer)
+    """
+    now = datetime.now(timezone.utc)
+    serial_number = x509.random_serial_number()
+
+    builder = (
+        x509.CertificateBuilder()
+        .subject_name(subject_name)
+        .issuer_name(ca_cert.subject)
+        .public_key(public_key)
+        .serial_number(serial_number)
+        .not_valid_before(now - timedelta(minutes=1))
+        .not_valid_after(now + timedelta(days=validity_days))
+        .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+        .add_extension(
+            x509.KeyUsage(
+                digital_signature=True, key_encipherment=True,
+                content_commitment=False, data_encipherment=False,
+                key_agreement=False, key_cert_sign=False, crl_sign=False,
+                encipher_only=False, decipher_only=False,
+            ),
+            critical=True,
+        )
+        .add_extension(
+            x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]),
+            critical=False,
+        )
+    )
+
+    if san_value is not None:
+        builder = builder.add_extension(san_value, critical=False)
+
+    builder = (
+        builder
+        .add_extension(
+            x509.CRLDistributionPoints([
+                x509.DistributionPoint(
+                    full_name=[x509.UniformResourceIdentifier(crl_url)],
+                    relative_name=None, reasons=None, crl_issuer=None,
+                )
+            ]),
+            critical=False,
+        )
+        .add_extension(
+            x509.AuthorityInformationAccess([
+                x509.AccessDescription(
+                    access_method=AuthorityInformationAccessOID.OCSP,
+                    access_location=x509.UniformResourceIdentifier(ocsp_url),
+                )
+            ]),
+            critical=False,
+        )
+        .add_extension(
+            x509.SubjectKeyIdentifier.from_public_key(public_key),
+            critical=False,
+        )
+        .add_extension(
+            x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_cert.public_key()),
+            critical=False,
+        )
+    )
+
+    cert = builder.sign(private_key=ca_private_key, algorithm=hashes.SHA256())
+    return cert, serial_number
+
+
+def _extract_san(cert_or_csr) -> "x509.SubjectAlternativeName | None":
+    try:
+        ext = cert_or_csr.extensions.get_extension_for_class(
+            x509.SubjectAlternativeName
+        )
+        return ext.value
+    except x509.ExtensionNotFound:
+        return None
+
+
+def issue_cert_from_csr(
+    csr,
+    ca_cert,
+    ca_private_key,
+    validity_days: int = 365,
+    ocsp_url: str = "http://localhost:8888/ocsp",
+    crl_url: str  = "http://localhost:8889/crl.pem",
+):
+    """
+    Phát hành cert end-entity từ CSR đã được CSR-owner ký.
+
+    Subject + public_key lấy từ CSR (proof of possession). SAN copy từ CSR
+    nếu có. Caller chịu trách nhiệm verify chữ ký CSR TRƯỚC khi gọi hàm này
+    (xem services/csr_admin.approve_csr).
+
+    Trả về (cert, serial_number).
+    """
+    return _build_end_entity_cert(
+        subject_name=csr.subject,
+        public_key=csr.public_key(),
+        san_value=_extract_san(csr),
+        ca_cert=ca_cert, ca_private_key=ca_private_key,
+        validity_days=validity_days,
+        ocsp_url=ocsp_url, crl_url=crl_url,
+    )
+
+
+def reissue_cert_for_renewal(
+    old_cert,
+    ca_cert,
+    ca_private_key,
+    validity_days: int = 365,
+    ocsp_url: str = "http://localhost:8888/ocsp",
+    crl_url: str  = "http://localhost:8889/crl.pem",
+):
+    """
+    Phát hành cert MỚI giữ nguyên subject + public_key của cert cũ.
+
+    Dùng cho admin renew (A.8) — kéo dài thời hạn cho cùng 1 domain mà
+    KHÔNG đụng vào private key của customer (admin không có quyền truy cập
+    nó). Serial mới sinh ngẫu nhiên (khác cert cũ); chữ ký mới của Root CA
+    đang active.
+
+    Trả về (cert, serial_number).
+    """
+    return _build_end_entity_cert(
+        subject_name=old_cert.subject,
+        public_key=old_cert.public_key(),
+        san_value=_extract_san(old_cert),
+        ca_cert=ca_cert, ca_private_key=ca_private_key,
+        validity_days=validity_days,
+        ocsp_url=ocsp_url, crl_url=crl_url,
+    )
 
 
 def _build_san_list(names):

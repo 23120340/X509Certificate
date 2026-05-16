@@ -1,7 +1,11 @@
 """
-gui.py
-------
+legacy/lifecycle_demo.py
+------------------------
 Dynamic Multi-Server X.509 Demo — Tkinter GUI.
+
+Đây là GUI gốc của demo "5 bước verify + lifecycle/renew" — giữ lại làm
+"Verification Lab" để minh họa B.9 (upload cert ngoài + chạy 5 bước) và
+A.8 (renew/revoke trên cert đã phát hành) trước khi UI mới hoàn thiện.
 
 Layout:
   [Cơ sở hạ tầng]  [Thêm Server mới]
@@ -18,12 +22,12 @@ from datetime import datetime
 
 from cryptography import x509
 
-from issuer import load_or_create_issuer, publish_root_ca_to_trust_store
-from server_manager import ServerManager, FLAVORS
-from crl_manager import build_and_publish_crl
-from ocsp_server import OCSPHandler, start_ocsp_server
-from crl_server import start_crl_server
-from client import fetch_certificate, verify_certificate_full
+from core.ca import load_or_create_issuer, publish_root_ca_to_trust_store
+from legacy.server_manager import ServerManager, FLAVORS
+from core.crl import build_and_publish_crl
+from infra.ocsp_server import OCSPHandler, start_ocsp_server
+from infra.crl_server import start_crl_server
+from core.verify import fetch_certificate, verify_certificate_full
 
 # ── Đường dẫn và cổng mặc định ───────────────────────────────────────────────
 CERT_DIR        = "certs"
@@ -192,16 +196,18 @@ class App:
         box.pack(fill=tk.X, padx=8, pady=(0, 4))
 
         # Treeview
-        cols = ("name", "port", "flavor", "serial")
+        cols = ("name", "port", "flavor", "lifecycle", "serial")
         self.tree = ttk.Treeview(box, columns=cols, show="headings", height=5)
-        self.tree.heading("name",   text="Tên")
-        self.tree.heading("port",   text="Port")
-        self.tree.heading("flavor", text="Loại cert")
-        self.tree.heading("serial", text="Serial (hex)")
-        self.tree.column("name",   width=110, anchor="center")
-        self.tree.column("port",   width=70,  anchor="center")
-        self.tree.column("flavor", width=230, anchor="w")
-        self.tree.column("serial", width=220, anchor="w")
+        self.tree.heading("name",      text="Tên")
+        self.tree.heading("port",      text="Port")
+        self.tree.heading("flavor",    text="Loại cert (init)")
+        self.tree.heading("lifecycle", text="Lifecycle")
+        self.tree.heading("serial",    text="Serial (hex)")
+        self.tree.column("name",      width=110, anchor="center")
+        self.tree.column("port",      width=70,  anchor="center")
+        self.tree.column("flavor",    width=210, anchor="w")
+        self.tree.column("lifecycle", width=90,  anchor="center")
+        self.tree.column("serial",    width=200, anchor="w")
 
         vsb = ttk.Scrollbar(box, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=vsb.set)
@@ -213,6 +219,8 @@ class App:
         btn_frame.pack(side=tk.LEFT, padx=(8, 0), anchor="n")
         ttk.Button(btn_frame, text="🔍 Verify",
                    command=self.on_verify, width=16).pack(pady=3)
+        ttk.Button(btn_frame, text="🔄 Renew",
+                   command=self.on_renew, width=16).pack(pady=3)
         ttk.Button(btn_frame, text="🗑 Xóa",
                    command=self.on_delete, width=16).pack(pady=3)
         ttk.Button(btn_frame, text="📋 Xem cert",
@@ -324,9 +332,12 @@ class App:
 
         self.tree.insert(
             "", tk.END, iid=name,
-            values=(name, port, flavor, f"{entry.serial:#x}"),
+            values=(name, port, flavor, entry.lifecycle, f"{entry.serial:#x}"),
         )
-        self.log(f"[+] '{name}' port={port} flavor={flavor} serial={entry.serial:#x}", "ok")
+        self.log(
+            f"[+] '{name}' port={port} flavor={flavor} "
+            f"lifecycle={entry.lifecycle} serial={entry.serial:#x}", "ok",
+        )
 
         # Gợi ý port tiếp theo
         try:
@@ -346,6 +357,41 @@ class App:
         self.mgr.remove_server(name)
         self.tree.delete(name)
         self.log(f"[-] Server '{name}' đã xóa.", "info")
+
+    def on_renew(self):
+        """
+        Sinh cert mới (rotate key) cho server đang chọn. Cert cũ ngừng được
+        serve ngay; client lần Verify tiếp theo nhận cert mới, pin store
+        sẽ tự nhận đây là rotation hợp lệ (cùng issuer) và thêm pin mới
+        (giữ pin cũ làm backup cho đến khi cert cũ hết hạn tự nhiên → prune).
+        """
+        sel = self.tree.selection()
+        if not sel:
+            messagebox.showwarning("Chưa chọn", "Hãy chọn server cần renew.")
+            return
+        name = sel[0]
+        entry = self.mgr.servers.get(name)
+        if entry is None:
+            return
+        try:
+            self.mgr.renew_server(name, rotate_key=True)
+        except (ValueError, NotImplementedError, RuntimeError) as e:
+            messagebox.showerror("Lỗi", str(e))
+            return
+
+        # Cập nhật bảng: serial và lifecycle thay đổi sau renew
+        self.tree.item(
+            name,
+            values=(name, entry.port, entry.flavor, entry.lifecycle,
+                    f"{entry.serial:#x}"),
+        )
+        old = entry.previous_serials[-1] if entry.previous_serials else None
+        old_str = f"{old:#x}" if old is not None else "?"
+        self.log(
+            f"[↻] '{name}' đã RENEW (rotate key): "
+            f"serial {old_str} → {entry.serial:#x}; lifecycle={entry.lifecycle}",
+            "ok",
+        )
 
     # ── Verify ────────────────────────────────────────────────────────────────
 
@@ -416,7 +462,16 @@ class App:
         """Hiển thị thông tin chi tiết cert vào panel bên trái."""
         lines = []
         lines.append(f"Server  : {entry.name}  (port {entry.port})")
-        lines.append(f"Flavor  : {entry.flavor}")
+        lines.append(
+            f"Flavor  : {entry.flavor} (initial)   "
+            f"→  Lifecycle: {entry.lifecycle}   "
+            f"Mutation: {entry.wire_mutation}"
+        )
+        if entry.previous_serials:
+            chain = " → ".join(
+                f"{s:#x}" for s in entry.previous_serials + [entry.serial]
+            )
+            lines.append(f"Serial chain (oldest→newest): {chain}")
         lines.append("")
         lines.append(f"Version          : {cert.version.name}")
         lines.append(f"Serial           : {cert.serial_number:#x}")
@@ -454,9 +509,21 @@ class App:
 
 
 def main():
+    """Entry chạy độc lập (legacy). Mở 1 Tk root mới + mainloop."""
     root = tk.Tk()
     App(root)
     root.mainloop()
+
+
+def launch_as_toplevel(parent: tk.Misc) -> tk.Toplevel:
+    """
+    Mở demo này như Toplevel của 1 ứng dụng Tkinter đã chạy mainloop.
+    Dùng cho "Verification Lab" trong dashboard admin của CA app.
+    """
+    win = tk.Toplevel(parent)
+    win.transient(parent)
+    App(win)
+    return win
 
 
 if __name__ == "__main__":
