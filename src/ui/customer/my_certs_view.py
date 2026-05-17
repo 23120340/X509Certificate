@@ -11,6 +11,7 @@ Khách hàng xem + tải chứng chỉ của mình — đáp ứng B.6.
 import tkinter as tk
 from tkinter import ttk, messagebox
 
+from ui.theme import font
 from services.cert_lifecycle import list_certs_for_owner, get_cert_detail
 from ui.common import CertDetailDialog
 
@@ -29,8 +30,8 @@ class MyCertsFrame(ttk.Frame):
         self.app = app
 
         ttk.Label(
-            self, text="Chứng nhận của tôi (B.6)",
-            font=("Segoe UI", 14, "bold"),
+            self, text="Chứng nhận của tôi",
+            font=font("heading_lg"),
         ).pack(anchor="w", pady=(0, 4))
         ttk.Label(
             self,

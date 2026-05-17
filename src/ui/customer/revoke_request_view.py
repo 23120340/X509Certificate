@@ -11,6 +11,7 @@ Layout:
 import tkinter as tk
 from tkinter import ttk, messagebox
 
+from ui.theme import font
 from services.audit import write_audit, Action
 from services.cert_lifecycle import list_certs_for_owner
 from services.revocation_workflow import (
@@ -33,8 +34,8 @@ class RevokeRequestFrame(ttk.Frame):
         self.app = app
 
         ttk.Label(
-            self, text="Yêu cầu thu hồi (B.7)",
-            font=("Segoe UI", 14, "bold"),
+            self, text="Yêu cầu thu hồi",
+            font=font("heading_lg"),
         ).pack(anchor="w", pady=(0, 4))
         ttk.Label(
             self,
@@ -52,7 +53,7 @@ class RevokeRequestFrame(ttk.Frame):
 
         ttk.Label(
             self, text="Yêu cầu của tôi",
-            font=("Segoe UI", 11, "bold"),
+            font=font("heading_md"),
         ).pack(anchor="w", pady=(0, 4))
         self._build_table()
 

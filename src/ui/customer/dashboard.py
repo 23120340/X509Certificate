@@ -10,7 +10,7 @@ Các tính năng khác hiển thị placeholder "Coming in M…".
 import tkinter as tk
 from tkinter import ttk
 
-from ui.common import build_dashboard_header, coming_soon_frame
+from ui.common import build_dashboard_header, coming_soon_frame, hero_section
 from ui.theme import COLOR, SPACE, font
 from ui.customer.my_keys_view import MyKeysFrame
 from ui.customer.csr_submit_view import CSRSubmitFrame
@@ -24,12 +24,12 @@ class CustomerDashboardFrame(ttk.Frame):
 
     MENU: "list[tuple[str, str, str]]" = [
         ("Tổng quan",                    "ready", "overview"),
-        ("Keypair của tôi (B.4)",        "ready", "my_keys"),
-        ("Yêu cầu cấp cert (B.5-6)",     "ready", "my_csr"),
-        ("Chứng nhận của tôi (B.6)",     "ready", "my_certs"),
-        ("Yêu cầu thu hồi (B.7)",        "ready", "revoke_request"),
-        ("Tra cứu CRL (B.8)",            "ready", "view_crl"),
-        ("Upload cert ngoài (B.9)",      "ready", "external_upload"),
+        ("Keypair của tôi",              "ready", "my_keys"),
+        ("Yêu cầu cấp cert",             "ready", "my_csr"),
+        ("Chứng nhận của tôi",           "ready", "my_certs"),
+        ("Yêu cầu thu hồi",              "ready", "revoke_request"),
+        ("Tra cứu CRL",                  "ready", "view_crl"),
+        ("Upload cert ngoài",            "ready", "external_upload"),
     ]
 
     def __init__(self, parent: tk.Misc, app):
@@ -88,29 +88,32 @@ class CustomerDashboardFrame(ttk.Frame):
         factory(self.content, self.app).pack(fill=tk.BOTH, expand=True)
 
     def _page_overview(self, parent: tk.Misc, app) -> ttk.Frame:
-        frame = ttk.Frame(parent, padding=SPACE["xl"])
-        ttk.Label(
-            frame, text=f"Xin chào, {app.session['username']}",
-            style="Display.TLabel",
-        ).pack(anchor="w", pady=(0, SPACE["xs"]))
-        ttk.Label(
-            frame,
-            text="Cổng khách hàng — Xin cấp Chứng nhận X.509",
-            style="Muted.TLabel",
-        ).pack(anchor="w", pady=(0, SPACE["lg"]))
-        ttk.Label(
-            frame,
-            text=(
-                "Quy trình cấp Chứng nhận điển hình:\n\n"
-                "  1.  Sinh keypair RSA cá nhân (B.4)\n"
-                "  2.  Submit CSR cho domain website (B.5)\n"
-                "  3.  Đợi Admin duyệt → tải cert PEM về máy (B.6)\n"
-                "  4.  Khi cần — yêu cầu thu hồi (B.7)\n\n"
-                "Ngoài ra: tra cứu CRL công khai (B.8) hoặc upload cert "
-                "bất kỳ để chạy 5 bước verify (B.9)."
+        return hero_section(
+            parent,
+            eyebrow="Customer Portal",
+            title=f"Xin chào, {app.session['username']}",
+            subtitle="Cổng khách hàng — Xin cấp Chứng nhận X.509 cho domain của bạn.",
+            description=(
+                "Quy trình điển hình: sinh keypair RSA → submit CSR → đợi Admin "
+                "duyệt → tải cert PEM về máy. Khi cần, có thể gửi yêu cầu thu "
+                "hồi hoặc tra cứu CRL công khai."
             ),
-            justify=tk.LEFT,
-            style="TLabel",
-            wraplength=720,
-        ).pack(anchor="w")
-        return frame
+            primary_cta=("Sinh keypair",
+                         lambda: self._show_page("my_keys")),
+            secondary_cta=("Submit CSR",
+                           lambda: self._show_page("my_csr")),
+            features=[
+                ("◆", "Keypair của tôi",
+                 "Sinh RSA private/public key, lưu mã hóa trong DB cục bộ."),
+                ("▣", "Submit CSR",
+                 "Tạo yêu cầu cấp cert cho domain bạn sở hữu."),
+                ("◉", "Cert của tôi",
+                 "Xem & tải cert PEM về máy khi Admin đã duyệt."),
+                ("▶", "Yêu cầu thu hồi",
+                 "Gửi yêu cầu thu hồi cert khi key bị lộ hoặc hết dùng."),
+                ("⬢", "Tra cứu CRL",
+                 "Xem danh sách thu hồi công khai của CA."),
+                ("✦", "Verify cert ngoài",
+                 "Upload cert bất kỳ + chạy 5 bước verify đầy đủ."),
+            ],
+        )

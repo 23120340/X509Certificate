@@ -135,6 +135,111 @@ def coming_soon_frame(parent: tk.Misc, feature: str, milestone: str) -> ttk.Fram
     return frame
 
 
+# ── Hero section ─────────────────────────────────────────────────────────────
+
+def hero_section(
+    parent: tk.Misc,
+    title: str,
+    eyebrow: "str | None" = None,
+    subtitle: str = "",
+    description: str = "",
+    primary_cta: "tuple[str, object] | None" = None,
+    secondary_cta: "tuple[str, object] | None" = None,
+    features: "list[tuple[str, str, str]] | None" = None,
+    cols: int = 3,
+) -> ttk.Frame:
+    """
+    SaaS-style hero: large headline + subtitle + CTAs, optional feature card grid.
+
+    Bố cục:
+      ┌──────────────────────────────────────────────────────┐
+      │ ▔▔▔▔▔▔ (accent strip)                                │
+      │                                                       │
+      │ EYEBROW                                               │
+      │ Hero title (DFVN Float, 36pt)                         │
+      │ Subtitle (Montserrat 11pt, muted)                     │
+      │ Description (Montserrat 10pt)                         │
+      │                                                       │
+      │ [Primary CTA]  [Secondary CTA]                        │
+      └──────────────────────────────────────────────────────┘
+      ┌──────────┐ ┌──────────┐ ┌──────────┐
+      │ ◆ Title  │ │ ▣ Title  │ │ ◉ Title  │   ← feature cards
+      │   desc   │ │   desc   │ │   desc   │
+      └──────────┘ └──────────┘ └──────────┘
+
+    Args:
+      features: list of (glyph, title, desc) — glyph là unicode 1 ký tự dùng
+                làm icon monochrome.
+      cols: số cột feature cards (default 3).
+    """
+    container = ttk.Frame(parent)
+
+    # ── Hero card ──
+    hero = ttk.Frame(container, style="Hero.TFrame")
+    hero.pack(fill=tk.X, padx=SPACE["xl"], pady=(SPACE["xl"], SPACE["lg"]))
+
+    # Accent strip on top
+    ttk.Frame(hero, style="HeroAccent.TFrame", height=4).pack(fill=tk.X)
+
+    inner = ttk.Frame(hero, style="Hero.TFrame",
+                      padding=(SPACE["xxxl"], SPACE["xxl"]))
+    inner.pack(fill=tk.X)
+
+    if eyebrow:
+        ttk.Label(inner, text=eyebrow.upper(),
+                  style="HeroEyebrow.TLabel").pack(anchor="w",
+                                                   pady=(0, SPACE["xs"]))
+
+    ttk.Label(inner, text=title, style="Hero.TLabel").pack(anchor="w")
+
+    if subtitle:
+        ttk.Label(
+            inner, text=subtitle, style="HeroSubtitle.TLabel",
+            wraplength=900, justify=tk.LEFT,
+        ).pack(anchor="w", pady=(SPACE["sm"], 0))
+
+    if description:
+        ttk.Label(
+            inner, text=description, style="HeroDesc.TLabel",
+            wraplength=900, justify=tk.LEFT,
+        ).pack(anchor="w", pady=(SPACE["md"], 0))
+
+    if primary_cta or secondary_cta:
+        cta_row = ttk.Frame(inner, style="Hero.TFrame")
+        cta_row.pack(anchor="w", pady=(SPACE["xl"], 0))
+        if primary_cta:
+            label, cmd = primary_cta
+            ttk.Button(cta_row, text=label,
+                       style="Primary.TButton", command=cmd).pack(side=tk.LEFT)
+        if secondary_cta:
+            label, cmd = secondary_cta
+            ttk.Button(cta_row, text=label, command=cmd).pack(
+                side=tk.LEFT, padx=(SPACE["sm"], 0))
+
+    # ── Feature cards grid ──
+    if features:
+        grid_wrap = ttk.Frame(container)
+        grid_wrap.pack(fill=tk.X, padx=SPACE["xl"], pady=(0, SPACE["xl"]))
+        ncols = min(cols, len(features))
+        for i, (glyph, ftitle, fdesc) in enumerate(features):
+            r, c = divmod(i, ncols)
+            card = ttk.Frame(grid_wrap, style="Card.TFrame",
+                             padding=(SPACE["lg"], SPACE["lg"]))
+            card.grid(row=r, column=c, sticky="nsew",
+                      padx=SPACE["xs"], pady=SPACE["xs"])
+            ttk.Label(card, text=glyph, style="CardIcon.TLabel").pack(anchor="w")
+            ttk.Label(card, text=ftitle, style="CardTitle.TLabel").pack(
+                anchor="w", pady=(SPACE["sm"], 0))
+            ttk.Label(
+                card, text=fdesc, style="CardDesc.TLabel",
+                wraplength=280, justify=tk.LEFT,
+            ).pack(anchor="w", pady=(SPACE["xs"], 0))
+        for c in range(ncols):
+            grid_wrap.columnconfigure(c, weight=1, uniform="hero_card_col")
+
+    return container
+
+
 # ── Cert detail dialog (shared admin + customer) ─────────────────────────────
 
 class CertDetailDialog(tk.Toplevel):
@@ -180,7 +285,7 @@ class CertDetailDialog(tk.Toplevel):
         info = "\n".join(lines)
         lbl = ttk.Label(
             self, text=info, justify=tk.LEFT,
-            font=("Courier New", 9), padding=(12, 10),
+            font=font("mono"), padding=(12, 10),
         )
         lbl.pack(anchor="w")
 
@@ -195,7 +300,7 @@ class CertDetailDialog(tk.Toplevel):
 
     def _build_decoded_tab(self, parent: tk.Misc) -> ttk.Frame:
         frame = ttk.Frame(parent)
-        text = tk.Text(frame, font=("Courier New", 9), wrap=tk.WORD)
+        text = tk.Text(frame, font=font("mono"), wrap=tk.WORD)
         text.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
 
         try:
@@ -234,7 +339,7 @@ class CertDetailDialog(tk.Toplevel):
 
     def _build_pem_tab(self, parent: tk.Misc) -> ttk.Frame:
         frame = ttk.Frame(parent)
-        text = tk.Text(frame, font=("Courier New", 9), wrap=tk.NONE)
+        text = tk.Text(frame, font=font("mono"), wrap=tk.NONE)
         text.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
         self._pem_str = bytes(self.rec["cert_pem"]).decode("ascii", errors="replace")
         text.insert("1.0", self._pem_str)

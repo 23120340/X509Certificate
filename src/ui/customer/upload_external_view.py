@@ -20,6 +20,7 @@ import os
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
+from ui.theme import font
 from services.audit import write_audit, Action
 from services.ca_admin import publish_active_to_trust_store
 from services.external_certs import (
@@ -39,8 +40,8 @@ class UploadExternalFrame(ttk.Frame):
         self.app = app
 
         ttk.Label(
-            self, text="Upload chứng chỉ ngoài + Verify (B.9)",
-            font=("Segoe UI", 14, "bold"),
+            self, text="Upload chứng chỉ ngoài + Verify",
+            font=font("heading_lg"),
         ).pack(anchor="w", pady=(0, 4))
         ttk.Label(
             self,
@@ -74,7 +75,7 @@ class UploadExternalFrame(ttk.Frame):
         ).pack(side=tk.LEFT, padx=(12, 0))
 
         self.pem_text = tk.Text(
-            frame, height=14, font=("Courier New", 9), wrap=tk.NONE,
+            frame, height=14, font=font("mono"), wrap=tk.NONE,
         )
         self.pem_text.pack(fill=tk.BOTH, expand=True, pady=(6, 6))
 
@@ -96,7 +97,7 @@ class UploadExternalFrame(ttk.Frame):
 
         self.preview_label = ttk.Label(
             frame, text="", foreground="#444",
-            font=("Courier New", 9), justify=tk.LEFT,
+            font=font("mono"), justify=tk.LEFT,
         )
         self.preview_label.pack(anchor="w", pady=(8, 0))
         return frame
@@ -355,20 +356,20 @@ class VerifyExternalDialog(tk.Toplevel):
                 "infra/ocsp_server đang chạy. Mở Verification Lab "
                 "(admin) để khởi động chúng."
             ),
-            foreground="#888", font=("Segoe UI", 8),
+            foreground="#888", font=font("caption"),
             padding=(12, 0, 12, 8), wraplength=740, justify=tk.LEFT,
         ).pack(anchor="w")
 
         # Output area
         self.log_text = tk.Text(
-            self, font=("Courier New", 9), wrap=tk.WORD, height=24,
+            self, font=font("mono"), wrap=tk.WORD, height=24,
         )
         self.log_text.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 6))
         self.log_text.tag_config("ok",   foreground="#1e8449")
         self.log_text.tag_config("fail", foreground="#c0392b")
         self.log_text.tag_config("info", foreground="#2c3e50")
         self.log_text.tag_config("head", foreground="#2471a3",
-                                 font=("Courier New", 9, "bold"))
+                                 font=font("label"))
 
         # Banner
         self.banner = tk.Frame(self, height=40, bg="#95a5a6")
@@ -376,7 +377,7 @@ class VerifyExternalDialog(tk.Toplevel):
         self.banner.pack_propagate(False)
         self.banner_label = tk.Label(
             self.banner, text="Chưa chạy verify",
-            bg="#95a5a6", fg="white", font=("Segoe UI", 11, "bold"),
+            bg="#95a5a6", fg="white", font=font("heading_md"),
         )
         self.banner_label.pack(expand=True, fill=tk.BOTH)
 

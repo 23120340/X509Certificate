@@ -10,6 +10,7 @@ Admin duyệt yêu cầu thu hồi (A.9).
 import tkinter as tk
 from tkinter import ttk, messagebox
 
+from ui.theme import font
 from services.audit import write_audit, Action
 from services.revocation_workflow import (
     list_all_revocations, get_revocation_detail,
@@ -31,14 +32,14 @@ class RevokeQueueFrame(ttk.Frame):
         self.app = app
 
         ttk.Label(
-            self, text="Duyệt yêu cầu thu hồi (A.9)",
-            font=("Segoe UI", 14, "bold"),
+            self, text="Duyệt yêu cầu thu hồi",
+            font=font("heading_lg"),
         ).pack(anchor="w", pady=(0, 4))
         ttk.Label(
             self,
             text=(
                 "Approve sẽ đánh dấu cert revoked NGAY trong DB. CRL/OCSP "
-                "sẽ phản ánh sau khi Admin bấm Publish CRL (A.10)."
+                "sẽ phản ánh sau khi Admin bấm Publish CRL."
             ),
             foreground="#666", wraplength=720, justify=tk.LEFT,
         ).pack(anchor="w", pady=(0, 12))
@@ -242,7 +243,7 @@ class RejectRevocationDialog(tk.Toplevel):
             text=f"Từ chối yêu cầu thu hồi:\n"
                  f"  Request #{rec['id']} cho cert #{rec['issued_cert_id']}\n"
                  f"  Domain: {rec.get('common_name') or '?'}\n",
-            justify=tk.LEFT, font=("Segoe UI", 10),
+            justify=tk.LEFT, font=font("body"),
         ).pack(anchor="w")
 
         ttk.Label(

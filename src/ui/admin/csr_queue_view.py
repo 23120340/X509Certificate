@@ -13,6 +13,7 @@ Queue duyệt CSR cho admin (A.6 từ chối + A.7 phê duyệt).
 import tkinter as tk
 from tkinter import ttk, messagebox
 
+from ui.theme import font
 from services.audit import write_audit, Action
 from services.csr_admin import (
     list_all_csr, get_csr_detail, approve_csr, reject_csr, CSRAdminError,
@@ -34,8 +35,8 @@ class CSRQueueFrame(ttk.Frame):
         self.app = app
 
         ttk.Label(
-            self, text="Duyệt CSR (A.6-7)",
-            font=("Segoe UI", 14, "bold"),
+            self, text="Duyệt CSR",
+            font=font("heading_lg"),
         ).pack(anchor="w", pady=(0, 4))
         ttk.Label(
             self,
@@ -202,10 +203,10 @@ class ViewCSRDialog(tk.Toplevel):
 
         ttk.Label(
             self, text=info, justify=tk.LEFT,
-            font=("Courier New", 9), padding=(12, 10),
+            font=font("mono"), padding=(12, 10),
         ).pack(anchor="w")
 
-        text = tk.Text(self, font=("Courier New", 9), wrap=tk.NONE)
+        text = tk.Text(self, font=font("mono"), wrap=tk.NONE)
         text.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 12))
         pem = bytes(rec["csr_pem"]).decode("ascii", errors="replace")
         text.insert("1.0", pem)
@@ -246,7 +247,7 @@ class ApproveCSRDialog(tk.Toplevel):
             frame,
             text=f"Phát hành cert cho:\n  {rec['common_name']}\n  "
                  f"(requester: {rec.get('requester_username') or rec['requester_id']})",
-            justify=tk.LEFT, font=("Segoe UI", 10),
+            justify=tk.LEFT, font=font("body"),
         ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 12))
 
         ttk.Label(frame, text="Hiệu lực (ngày):").grid(
@@ -259,7 +260,7 @@ class ApproveCSRDialog(tk.Toplevel):
         ttk.Label(
             frame,
             text="Cert sẽ được ký bởi Root CA active hiện tại.",
-            foreground="#666", font=("Segoe UI", 8),
+            foreground="#666", font=font("caption"),
         ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(8, 0))
 
         btn_row = ttk.Frame(frame)
@@ -332,7 +333,7 @@ class RejectCSRDialog(tk.Toplevel):
         ttk.Label(
             frame,
             text=f"Từ chối CSR cho:\n  {rec['common_name']}\n",
-            justify=tk.LEFT, font=("Segoe UI", 10),
+            justify=tk.LEFT, font=font("body"),
         ).pack(anchor="w")
 
         ttk.Label(

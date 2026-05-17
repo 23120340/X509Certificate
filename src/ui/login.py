@@ -77,7 +77,7 @@ class LoginFrame(ttk.Frame):
         # Hint admin mặc định (chỉ hiển thị nếu user chưa đổi)
         hint = ttk.Label(
             frame,
-            text="Mặc định lần đầu: admin / Admin@123 — ĐỔI ngay sau khi đăng nhập.",
+            text="Mặc định lần đầu: admin / Admin@123.",
             style="Subtle.TLabel",
         )
         hint.grid(row=3, column=0, columnspan=2, pady=(SPACE["sm"], 0))

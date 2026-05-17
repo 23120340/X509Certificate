@@ -16,6 +16,7 @@ Bấm "Lưu" → validate → set_config từng key → audit log.
 import tkinter as tk
 from tkinter import ttk, messagebox
 
+from ui.theme import font
 from services.system_config import (
     get_all_config, set_config, DEFAULTS,
 )
@@ -35,8 +36,8 @@ class SystemConfigFrame(ttk.Frame):
         self.app = app
 
         ttk.Label(
-            self, text="Cấu hình hệ thống (A.3)",
-            font=("Segoe UI", 14, "bold"),
+            self, text="Cấu hình hệ thống",
+            font=font("heading_lg"),
         ).pack(anchor="w", pady=(0, 4))
         ttk.Label(
             self,

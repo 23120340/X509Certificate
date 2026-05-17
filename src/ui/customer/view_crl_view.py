@@ -12,6 +12,7 @@ Layout:
 import tkinter as tk
 from tkinter import ttk
 
+from ui.theme import font
 from services.crl_publish import (
     get_published_crl_info, list_crl_entries, DEFAULT_CRL_PATH,
 )
@@ -24,8 +25,8 @@ class ViewCRLFrame(ttk.Frame):
         self.app = app
 
         ttk.Label(
-            self, text="Tra cứu CRL (B.8)",
-            font=("Segoe UI", 14, "bold"),
+            self, text="Tra cứu CRL",
+            font=font("heading_lg"),
         ).pack(anchor="w", pady=(0, 4))
         ttk.Label(
             self,
@@ -144,7 +145,7 @@ class ViewCRLFrame(ttk.Frame):
                 row.pack(anchor="w", pady=1)
                 ttk.Label(
                     row, text=f"{label}:",
-                    font=("Segoe UI", 9, "bold"), width=14,
+                    font=font("label"), width=14,
                 ).pack(side=tk.LEFT)
                 ttk.Label(row, text=str(info[key])).pack(side=tk.LEFT)
             self._cached_entries = list_crl_entries(

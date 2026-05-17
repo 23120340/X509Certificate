@@ -14,7 +14,7 @@ Mục A.11 (Audit log) và Verification Lab đã wire-up hoàn chỉnh.
 import tkinter as tk
 from tkinter import ttk
 
-from ui.common import build_dashboard_header, coming_soon_frame
+from ui.common import build_dashboard_header, coming_soon_frame, hero_section
 from ui.theme import COLOR, SPACE, font
 from ui.admin.audit_view import AuditLogFrame
 from ui.admin.system_config_view import SystemConfigFrame
@@ -32,13 +32,13 @@ class AdminDashboardFrame(ttk.Frame):
     # factory(parent, app) → ttk.Frame để render trong content area
     MENU: "list[tuple[str, str, str]]" = [
         ("Tổng quan",                 "ready", "overview"),
-        ("Cấu hình hệ thống (A.3)",   "ready", "system_config"),
-        ("Root CA (A.4-5)",           "ready", "root_ca"),
-        ("Duyệt CSR (A.6-7)",         "ready", "csr_queue"),
-        ("Quản lý chứng nhận (A.8)",  "ready", "cert_mgmt"),
-        ("Duyệt thu hồi (A.9)",       "ready", "revoke_queue"),
-        ("Cập nhật CRL (A.10)",       "ready", "crl_publish"),
-        ("Audit log (A.11)",          "ready", "audit_log"),
+        ("Cấu hình hệ thống",         "ready", "system_config"),
+        ("Root CA",                   "ready", "root_ca"),
+        ("Duyệt CSR",                 "ready", "csr_queue"),
+        ("Quản lý chứng nhận",        "ready", "cert_mgmt"),
+        ("Duyệt thu hồi",             "ready", "revoke_queue"),
+        ("Cập nhật CRL",              "ready", "crl_publish"),
+        ("Audit log",                 "ready", "audit_log"),
         ("Verification Lab",          "ready", "verify_lab"),
     ]
 
@@ -108,64 +108,67 @@ class AdminDashboardFrame(ttk.Frame):
     # ── Pages ─────────────────────────────────────────────────────────────────
 
     def _page_overview(self, parent: tk.Misc, app) -> ttk.Frame:
-        frame = ttk.Frame(parent, padding=SPACE["xl"])
-        ttk.Label(
-            frame, text=f"Xin chào, {app.session['username']}",
-            style="Display.TLabel",
-        ).pack(anchor="w", pady=(0, SPACE["xs"]))
-        ttk.Label(
-            frame,
-            text="Trung tâm quản trị Certificate Authority",
-            style="Muted.TLabel",
-        ).pack(anchor="w", pady=(0, SPACE["lg"]))
-        ttk.Label(
-            frame,
-            text=(
-                "Chọn một mục từ menu bên trái để bắt đầu.\n\n"
-                "11 chức năng quản trị (A.1-A.11) đã sẵn sàng:\n"
-                "  • Cấu hình hệ thống + sinh Root CA (A.3–A.5)\n"
-                "  • Duyệt CSR + phát hành cert (A.6–A.7)\n"
-                "  • Quản lý cert: revoke / renew (A.8)\n"
-                "  • Duyệt yêu cầu thu hồi (A.9)\n"
-                "  • Publish CRL (A.10)\n"
-                "  • Audit log (A.11)\n\n"
-                "Verification Lab cung cấp 5-bước verify + lifecycle demo "
-                "để minh họa cách client xác thực cert."
+        return hero_section(
+            parent,
+            eyebrow="Admin Portal",
+            title=f"Xin chào, {app.session['username']}",
+            subtitle="Trung tâm quản trị Certificate Authority — đủ chức năng vận hành end-to-end.",
+            description=(
+                "Chọn một mục từ menu bên trái để bắt đầu, hoặc mở thẳng "
+                "Verification Lab để minh họa cách client xác thực cert "
+                "thật trên 5 bước chuẩn X.509."
             ),
-            justify=tk.LEFT,
-            style="TLabel",
-            wraplength=720,
-        ).pack(anchor="w")
-        return frame
+            primary_cta=("Mở Verification Lab", self._open_verify_lab),
+            secondary_cta=("Xem Audit log", lambda: self._show_page("audit_log")),
+            features=[
+                ("◆", "Cấu hình & Root CA",
+                 "Khởi tạo policy, sinh Root CA self-signed lưu encrypted."),
+                ("▣", "Duyệt CSR",
+                 "Pipeline review CSR, phát hành cert ký bởi Root CA."),
+                ("◉", "Lifecycle cert",
+                 "Quản lý cert đã phát hành: tra cứu, revoke, renew."),
+                ("▶", "Duyệt thu hồi",
+                 "Xét yêu cầu thu hồi từ customer, cập nhật CRL nội bộ."),
+                ("⬢", "CRL & OCSP",
+                 "Publish CRL định kỳ + OCSP responder thời gian thực."),
+                ("✦", "Audit log",
+                 "Trail đầy đủ mọi action của admin và customer."),
+            ],
+        )
 
     def _page_verify_lab(self, parent: tk.Misc, app) -> ttk.Frame:
         """Launcher cho legacy lifecycle demo (mở Toplevel)."""
-        frame = ttk.Frame(parent, padding=24)
-        ttk.Label(
-            frame, text="Verification Lab",
-            font=("Segoe UI", 16, "bold"),
-        ).pack(anchor="w")
-        ttk.Label(
-            frame,
-            text=(
-                "Phòng thí nghiệm xác thực cert: tạo nhiều socket server với "
-                "các 'flavor' khác nhau (valid / expired / revoked / tampered / "
-                "renew rotate), chạy 5 bước verify để minh họa cách client phát "
-                "hiện từng loại lỗi.\n\n"
-                "Đây là demo gốc của hệ thống, giữ lại để giảng giải mô hình "
-                "Root CA + Trust Store + CRL/OCSP. Tính năng upload cert ngoài "
-                "(B.9) sẽ tái dùng đúng module verify này."
+        return hero_section(
+            parent,
+            eyebrow="Laboratory",
+            title="Verification Lab",
+            subtitle=(
+                "Phòng thí nghiệm xác thực cert — 5 bước verify trên cert "
+                "thật, với các flavor lỗi để minh họa từng nhánh thất bại."
             ),
-            justify=tk.LEFT,
-            foreground="#444",
-            wraplength=720,
-        ).pack(anchor="w", pady=(8, 12))
-
-        ttk.Button(
-            frame, text="Mở Verification Lab (Toplevel)",
-            command=self._open_verify_lab,
-        ).pack(anchor="w")
-        return frame
+            description=(
+                "Lab tạo nhiều socket server với các flavor: valid / expired / "
+                "revoked / tampered / renew rotate. Client chạy 5 bước verify "
+                "qua TLS thật để cho thấy từng loại lỗi bị phát hiện ở bước "
+                "nào. Đây là demo gốc giữ lại để giảng giải mô hình Root CA + "
+                "Trust Store + CRL/OCSP — module verify này được tái dùng cho "
+                "tính năng upload cert ngoài của customer."
+            ),
+            primary_cta=("Mở Verification Lab", self._open_verify_lab),
+            features=[
+                ("1", "Parse PEM",
+                 "Đọc & validate format X.509 của cert nhận từ server."),
+                ("2", "Chain build",
+                 "Dựng chain từ leaf tới Root CA trong trust store."),
+                ("3", "Signature verify",
+                 "Verify RSA signature dọc theo chain bằng public key cha."),
+                ("4", "Validity window",
+                 "Kiểm tra notBefore/notAfter, chấp nhận clock skew nhỏ."),
+                ("5", "Revocation check",
+                 "Tra CRL + OCSP cho status hiện tại của cert leaf."),
+            ],
+            cols=3,
+        )
 
     def _open_verify_lab(self) -> None:
         from legacy.lifecycle_demo import launch_as_toplevel

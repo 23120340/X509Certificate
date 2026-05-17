@@ -12,6 +12,7 @@ Layout:
 import tkinter as tk
 from tkinter import ttk, messagebox
 
+from ui.theme import font
 from services.customer_keys import list_keys
 from services.csr_workflow import (
     submit_csr, list_my_csr, get_my_csr_by_id, cancel_csr, CSRError,
@@ -33,8 +34,8 @@ class CSRSubmitFrame(ttk.Frame):
         self.app = app
 
         ttk.Label(
-            self, text="Yêu cầu cấp Chứng nhận X.509 (B.5-6)",
-            font=("Segoe UI", 14, "bold"),
+            self, text="Yêu cầu cấp Chứng nhận X.509",
+            font=font("heading_lg"),
         ).pack(anchor="w", pady=(0, 4))
         ttk.Label(
             self,
@@ -52,7 +53,7 @@ class CSRSubmitFrame(ttk.Frame):
 
         ttk.Label(
             self, text="Các CSR của tôi",
-            font=("Segoe UI", 11, "bold"),
+            font=font("heading_md"),
         ).pack(anchor="w", pady=(0, 4))
         self._build_table()
         self._build_table_actions()
@@ -95,7 +96,7 @@ class CSRSubmitFrame(ttk.Frame):
         ttk.Label(
             form,
             text="VD: www.example.com, api.example.com  •  để trống = chỉ CN",
-            foreground="#888", font=("Segoe UI", 8),
+            foreground="#888", font=font("caption"),
         ).grid(row=3, column=1, columnspan=3, sticky="w", padx=4)
 
         ttk.Button(form, text="Submit CSR", command=self.on_submit).grid(
@@ -268,10 +269,10 @@ class ViewCSRPEMDialog(tk.Toplevel):
 
         ttk.Label(
             self, text=info, justify=tk.LEFT,
-            font=("Courier New", 9), padding=(12, 10),
+            font=font("mono"), padding=(12, 10),
         ).pack(anchor="w")
 
-        text = tk.Text(self, font=("Courier New", 9), wrap=tk.NONE)
+        text = tk.Text(self, font=font("mono"), wrap=tk.NONE)
         text.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 12))
         pem = bytes(csr_record["csr_pem"]).decode("ascii", errors="replace")
         text.insert("1.0", pem)

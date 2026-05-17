@@ -12,6 +12,7 @@ Quản lý keypair cá nhân của khách hàng (B.4).
 import tkinter as tk
 from tkinter import ttk, messagebox
 
+from ui.theme import font
 from services.customer_keys import (
     generate_keypair, list_keys, get_key_meta, delete_key, CustomerKeyError,
 )
@@ -28,8 +29,8 @@ class MyKeysFrame(ttk.Frame):
         self.app = app
 
         ttk.Label(
-            self, text="Keypair của tôi (B.4)",
-            font=("Segoe UI", 14, "bold"),
+            self, text="Keypair của tôi",
+            font=font("heading_lg"),
         ).pack(anchor="w", pady=(0, 4))
         ttk.Label(
             self,
@@ -162,7 +163,7 @@ class GenerateKeypairDialog(tk.Toplevel):
         ttk.Label(
             frame,
             text="Lưu ý: sinh key 4096 có thể mất vài giây.",
-            foreground="#888", font=("Segoe UI", 8),
+            foreground="#888", font=font("caption"),
         ).grid(row=2, column=0, columnspan=2, pady=(8, 0), padx=4, sticky="w")
 
         btn_row = ttk.Frame(frame)
@@ -227,11 +228,11 @@ class ViewPublicKeyDialog(tk.Toplevel):
                 f"Keypair: {meta['name']}  •  RSA-{meta['key_size']}  •  "
                 f"id={meta['id']}"
             ),
-            font=("Segoe UI", 10, "bold"),
+            font=font("heading_sm"),
             padding=(12, 8),
         ).pack(anchor="w")
 
-        text = tk.Text(self, font=("Courier New", 9), wrap=tk.NONE)
+        text = tk.Text(self, font=font("mono"), wrap=tk.NONE)
         text.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 12))
         pem_str = bytes(meta["public_key_pem"]).decode("ascii", errors="replace")
         text.insert("1.0", pem_str)

@@ -22,6 +22,7 @@ from datetime import datetime
 
 from cryptography import x509
 
+from ui.theme import font
 from core.ca import load_or_create_issuer, publish_root_ca_to_trust_store
 from legacy.server_manager import ServerManager, FLAVORS
 from core.crl import build_and_publish_crl
@@ -112,21 +113,21 @@ class App:
         left = ttk.LabelFrame(mid, text="Thông tin chứng chỉ", padding=4)
         left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 4))
         self.cert_info = scrolledtext.ScrolledText(
-            left, height=14, font=("Courier New", 8), wrap=tk.WORD
+            left, height=14, font=font("mono_sm"), wrap=tk.WORD
         )
         self.cert_info.pack(fill=tk.BOTH, expand=True)
 
         right = ttk.LabelFrame(mid, text="Log quá trình (step-by-step)", padding=4)
         right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(4, 0))
         self.log_text = scrolledtext.ScrolledText(
-            right, height=14, font=("Courier New", 8), wrap=tk.WORD
+            right, height=14, font=font("mono_sm"), wrap=tk.WORD
         )
         self.log_text.pack(fill=tk.BOTH, expand=True)
         self.log_text.tag_config("ok",   foreground="#1e8449")
         self.log_text.tag_config("fail", foreground="#c0392b")
         self.log_text.tag_config("info", foreground="#2c3e50")
         self.log_text.tag_config("head", foreground="#2471a3",
-                                 font=("Courier New", 8, "bold"))
+                                 font=font("caption"))
 
         # ── Banner kết quả ────────────────────────────────────────────────────
         self.result_frame = tk.Frame(self.root, height=60, bg="#95a5a6")
@@ -134,7 +135,7 @@ class App:
         self.result_frame.pack_propagate(False)
         self.result_label = tk.Label(
             self.result_frame, text="Chưa chạy xác thực",
-            bg="#95a5a6", fg="white", font=("Arial", 18, "bold"),
+            bg="#95a5a6", fg="white", font=font("heading_xl"),
         )
         self.result_label.pack(expand=True, fill=tk.BOTH)
 

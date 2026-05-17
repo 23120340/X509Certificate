@@ -12,6 +12,7 @@ Quản lý các chứng nhận đã cấp phát — đáp ứng A.8 (revoke + re
 import tkinter as tk
 from tkinter import ttk, messagebox
 
+from ui.theme import font
 from services.audit import write_audit, Action
 from services.cert_lifecycle import (
     list_all_certs, get_cert_detail, revoke_cert, renew_cert,
@@ -35,8 +36,8 @@ class CertMgmtFrame(ttk.Frame):
         self.app = app
 
         ttk.Label(
-            self, text="Quản lý chứng nhận (A.8)",
-            font=("Segoe UI", 14, "bold"),
+            self, text="Quản lý chứng nhận",
+            font=font("heading_lg"),
         ).pack(anchor="w", pady=(0, 4))
         ttk.Label(
             self,
@@ -203,7 +204,7 @@ class RevokeCertDialog(tk.Toplevel):
         ttk.Label(
             frame,
             text=f"Thu hồi cert cho:\n  {rec['common_name']} (serial {rec['serial_hex'][:16]}…)\n",
-            justify=tk.LEFT, font=("Segoe UI", 10),
+            justify=tk.LEFT, font=font("body"),
         ).pack(anchor="w")
 
         ttk.Label(
@@ -215,7 +216,7 @@ class RevokeCertDialog(tk.Toplevel):
         ttk.Label(
             frame,
             text="CRL/OCSP DB sẽ snapshot trạng thái này khi admin Publish CRL ở M8.",
-            foreground="#888", font=("Segoe UI", 8),
+            foreground="#888", font=font("caption"),
         ).pack(anchor="w", pady=(6, 0))
 
         btn_row = ttk.Frame(frame)
@@ -282,7 +283,7 @@ class RenewCertDialog(tk.Toplevel):
                 f"  serial cũ: {rec['serial_hex'][:24]}…\n"
                 f"  hết hạn cũ: {rec['not_valid_after'][:19].replace('T', ' ')}"
             ),
-            justify=tk.LEFT, font=("Segoe UI", 10),
+            justify=tk.LEFT, font=font("body"),
         ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 12))
 
         ttk.Label(frame, text="Hiệu lực mới (ngày):").grid(
@@ -298,7 +299,7 @@ class RenewCertDialog(tk.Toplevel):
                 "Cert mới giữ nguyên public key của customer (không cần "
                 "submit CSR mới). Cert cũ KHÔNG tự revoke."
             ),
-            foreground="#666", font=("Segoe UI", 8), wraplength=400,
+            foreground="#666", font=font("caption"), wraplength=400,
             justify=tk.LEFT,
         ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(8, 0))
 

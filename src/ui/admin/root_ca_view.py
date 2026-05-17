@@ -20,6 +20,7 @@ Modal "Sinh Root CA":
 import tkinter as tk
 from tkinter import ttk, messagebox
 
+from ui.theme import font
 from services.audit import write_audit, Action
 from services.ca_admin import (
     create_root_ca, get_active_root_ca, list_root_ca_history, CAError,
@@ -40,8 +41,8 @@ class RootCAFrame(ttk.Frame):
         self.app = app
 
         ttk.Label(
-            self, text="Root Certificate Authority (A.4-5)",
-            font=("Segoe UI", 14, "bold"),
+            self, text="Root Certificate Authority",
+            font=font("heading_lg"),
         ).pack(anchor="w", pady=(0, 4))
         ttk.Label(
             self,
@@ -58,7 +59,7 @@ class RootCAFrame(ttk.Frame):
 
         ttk.Label(
             self, text="Lịch sử Root CA",
-            font=("Segoe UI", 11, "bold"),
+            font=font("heading_md"),
         ).pack(anchor="w", pady=(20, 4))
         self._build_history_table()
 
@@ -99,7 +100,7 @@ class RootCAFrame(ttk.Frame):
 
         def row(label: str, value: str) -> None:
             ttk.Label(
-                box, text=label, font=("Segoe UI", 9, "bold"), width=20,
+                box, text=label, font=font("label"), width=20,
             ).grid(column=0, sticky="w", padx=(0, 8), pady=2)
             ttk.Label(box, text=value).grid(
                 column=1, sticky="w", pady=2,
@@ -114,7 +115,7 @@ class RootCAFrame(ttk.Frame):
             ("Created at",          "created_at"),
         ]):
             ttk.Label(
-                box, text=label, font=("Segoe UI", 9, "bold"),
+                box, text=label, font=font("label"),
             ).grid(row=i, column=0, sticky="w", padx=(0, 12), pady=2)
             ttk.Label(box, text=str(ca[key])).grid(
                 row=i, column=1, sticky="w", pady=2,

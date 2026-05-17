@@ -11,6 +11,7 @@ Cập nhật CRL — đáp ứng A.10.
 import tkinter as tk
 from tkinter import ttk, messagebox
 
+from ui.theme import font
 from services.audit import write_audit, Action
 from services.crl_publish import (
     publish_crl, get_published_crl_info, snapshot_revoked_serials,
@@ -25,8 +26,8 @@ class CRLPublishFrame(ttk.Frame):
         self.app = app
 
         ttk.Label(
-            self, text="Cập nhật CRL (A.10)",
-            font=("Segoe UI", 14, "bold"),
+            self, text="Cập nhật CRL",
+            font=font("heading_lg"),
         ).pack(anchor="w", pady=(0, 4))
         ttk.Label(
             self,
@@ -87,7 +88,7 @@ class CRLPublishFrame(ttk.Frame):
                 row.pack(anchor="w", pady=1)
                 ttk.Label(
                     row, text=f"{label}:",
-                    font=("Segoe UI", 9, "bold"), width=16,
+                    font=font("label"), width=16,
                 ).pack(side=tk.LEFT)
                 val = info[key]
                 if key == "file_size":
@@ -101,7 +102,7 @@ class CRLPublishFrame(ttk.Frame):
         ttk.Label(
             self.pending_box,
             text=f"Số serial revoked trong DB: {len(serials)}",
-            font=("Segoe UI", 10, "bold"),
+            font=font("heading_sm"),
         ).pack(anchor="w")
         if serials:
             preview = ", ".join(f"{s:x}"[:16] for s in serials[:5])
@@ -109,7 +110,7 @@ class CRLPublishFrame(ttk.Frame):
             ttk.Label(
                 self.pending_box,
                 text=f"Preview (hex): {preview}{extra}",
-                foreground="#666", font=("Courier New", 9),
+                foreground="#666", font=font("mono"),
             ).pack(anchor="w", pady=(4, 0))
 
         # Diff so với current CRL

@@ -5,9 +5,8 @@ Design tokens + ttk style applier cho toàn ứng dụng.
 
 Triết lý:
   • Light mode, navy + slate palette (đáng tin, dành cho phiên dài).
-  • Typography hierarchy có chủ đích: heading display (Clash Display nếu có,
-    fallback chain), body sans-serif (Montserrat → Segoe UI), monospace cho
-    PEM/serial.
+  • Typography rút gọn còn 2 font: DFVN Float cho mọi title/heading
+    (display, h1, h2, h3, h4), Montserrat cho mọi body/label/caption/mono.
   • 4/8 spacing rhythm.
   • Status colors có cả tone đậm (text) lẫn tone nhạt (background).
   • Hover/pressed/disabled states cho button qua `Style.map`.
@@ -91,38 +90,20 @@ SPACE = {
 
 # ── Font resolution ──────────────────────────────────────────────────────────
 
-# Preference chains (first available wins). User listed Hinato/Modern Demo/
-# Epic Pro/Gudlak/Clash Display/Montserrat — we probe these + sensible
-# fallbacks.
+# Chỉ 2 font: DFVN Float cho title, Montserrat cho mọi nội dung khác.
+# Các tên phía sau chỉ là fallback an toàn nếu font chính không có sẵn trên
+# máy khác — primary luôn là 2 font đã chọn.
 HEADING_FONT_CHAIN = [
-    "Clash Display",  # display sans, very premium
-    "ClashDisplay",
-    "Gudlak",
-    "Hinato",
-    "Modern Demo",
-    "Epic Pro",
-    "Montserrat",
-    "Segoe UI Semibold",
-    "Segoe UI",
-    "Arial",
+    "Montserrat",     # fallback nếu DFVN Float không có
 ]
 
 BODY_FONT_CHAIN = [
-    "Montserrat",
-    "Segoe UI",
-    "Arial",
-    "Tahoma",
-    "Helvetica",
+    "Montserrat",     # body chính
 ]
 
-MONO_FONT_CHAIN = [
-    "JetBrains Mono",
-    "Cascadia Mono",
-    "Cascadia Code",
-    "Consolas",
-    "Courier New",
-    "monospace",
-]
+# Mono dùng chung BODY chain — chấp nhận mất alignment của PEM/serial để giữ
+# nguyên tắc 2 font.
+MONO_FONT_CHAIN = BODY_FONT_CHAIN
 
 
 _FONT_CACHE: "dict[str, str]" = {}
@@ -148,12 +129,13 @@ def resolve_family(chain: "list[str]", root: "tk.Misc | None" = None) -> str:
 
 # Font role spec: (chain, size, weight). Resolve lazy.
 FONT_SPEC = {
-    # Heading
+    # Heading — all DFVN Float
+    "hero":         (HEADING_FONT_CHAIN, 36, "bold"),
     "display":      (HEADING_FONT_CHAIN, 24, "bold"),
     "heading_xl":   (HEADING_FONT_CHAIN, 18, "bold"),
     "heading_lg":   (HEADING_FONT_CHAIN, 15, "bold"),
-    "heading_md":   (BODY_FONT_CHAIN,    12, "bold"),
-    "heading_sm":   (BODY_FONT_CHAIN,    10, "bold"),
+    "heading_md":   (HEADING_FONT_CHAIN, 12, "bold"),
+    "heading_sm":   (HEADING_FONT_CHAIN, 10, "bold"),
 
     # Body
     "body_lg":      (BODY_FONT_CHAIN,    11, "normal"),
@@ -239,7 +221,17 @@ def apply_theme(root: tk.Tk) -> None:
     style.configure("Card.TFrame",
                     background=COLOR["surface"],
                     relief="solid",
+                    bordercolor=COLOR["border"],
                     borderwidth=1)
+    # Hero card — same surface bg, slightly stronger border, used by hero_section()
+    style.configure("Hero.TFrame",
+                    background=COLOR["surface"],
+                    relief="solid",
+                    bordercolor=COLOR["border"],
+                    borderwidth=1)
+    # Accent strip on top of hero (navy bar) — purely decorative
+    style.configure("HeroAccent.TFrame",
+                    background=COLOR["primary"])
 
     style.configure(
         "TLabelframe",
@@ -292,6 +284,52 @@ def apply_theme(root: tk.Tk) -> None:
         "Mono.TLabel",
         font=font("mono", root),
         foreground=COLOR["text"],
+    )
+
+    # ── Hero label variants (all on surface bg) ──
+    style.configure(
+        "Hero.TLabel",
+        background=COLOR["surface"],
+        foreground=COLOR["text"],
+        font=font("hero", root),
+    )
+    style.configure(
+        "HeroEyebrow.TLabel",
+        background=COLOR["surface"],
+        foreground=COLOR["primary"],
+        font=font("label", root),
+    )
+    style.configure(
+        "HeroSubtitle.TLabel",
+        background=COLOR["surface"],
+        foreground=COLOR["text_muted"],
+        font=font("body_lg", root),
+    )
+    style.configure(
+        "HeroDesc.TLabel",
+        background=COLOR["surface"],
+        foreground=COLOR["text"],
+        font=font("body", root),
+    )
+
+    # ── Feature card label variants ──
+    style.configure(
+        "CardIcon.TLabel",
+        background=COLOR["surface"],
+        foreground=COLOR["primary"],
+        font=(font("body", root)[0], 22, "bold"),
+    )
+    style.configure(
+        "CardTitle.TLabel",
+        background=COLOR["surface"],
+        foreground=COLOR["text"],
+        font=font("heading_md", root),
+    )
+    style.configure(
+        "CardDesc.TLabel",
+        background=COLOR["surface"],
+        foreground=COLOR["text_muted"],
+        font=font("body_sm", root),
     )
 
     # ── Button — base ──
