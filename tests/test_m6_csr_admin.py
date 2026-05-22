@@ -286,6 +286,69 @@ def test_tampered_csr_signature_rejected():
         env.cleanup()
 
 
+def test_concurrent_approve_race():
+    """⭐ 2 thread cùng gọi approve_csr(same_id) qua threading.Barrier — đúng
+    1 thắng (cert issued + status=approved), thread kia raise CSRAdminError.
+
+    Chứng minh transaction guard ở csr_admin.approve_csr KHÔNG có race window.
+    """
+    import threading
+    from services.cert_lifecycle import list_all_certs
+
+    env = TestEnv()
+    try:
+        csr_id = env.make_csr("race.com")
+
+        barrier = threading.Barrier(2)
+        results = []  # list[("ok", ...) | ("err", str)]
+        results_lock = threading.Lock()
+
+        def worker():
+            barrier.wait()  # 2 thread cùng vào approve gần nhất có thể
+            try:
+                issued = approve_csr(
+                    csr_id, env.admin_id, 365, env.db_path,
+                )
+                with results_lock:
+                    results.append(("ok", issued))
+            except CSRAdminError as e:
+                with results_lock:
+                    results.append(("err", str(e)))
+            except Exception as e:
+                with results_lock:
+                    results.append(("unexpected", f"{type(e).__name__}: {e}"))
+
+        threads = [threading.Thread(target=worker) for _ in range(2)]
+        for t in threads: t.start()
+        for t in threads: t.join()
+
+        # ĐÚNG 1 ok + ĐÚNG 1 err — không 2 ok, không cả 2 err
+        oks   = [r for r in results if r[0] == "ok"]
+        errs  = [r for r in results if r[0] == "err"]
+        weird = [r for r in results if r[0] == "unexpected"]
+
+        assert len(weird) == 0, f"Unexpected exception: {weird}"
+        assert len(oks)  == 1, (
+            f"Race FAIL: phải có đúng 1 thread thắng, got {len(oks)} oks. "
+            f"All results: {results}"
+        )
+        assert len(errs) == 1, (
+            f"Race FAIL: phải có đúng 1 thread fail, got {len(errs)} errs. "
+            f"All results: {results}"
+        )
+
+        # Đúng 1 cert được issue
+        certs = list_all_certs(env.db_path)
+        cert_for_csr = [c for c in certs if c.get("common_name") == "race.com"]
+        assert len(cert_for_csr) == 1, (
+            f"Phải có đúng 1 cert phát hành, got {len(cert_for_csr)}"
+        )
+
+        print("  [race-approve] PASS ✓ — 2 thread đua approve: 1 thắng, 1 fail (transaction guard OK)")
+    finally:
+        env.cleanup()
+
+
 def test_list_pending_filters_correctly():
     env = TestEnv()
     try:
@@ -323,6 +386,7 @@ TESTS = [
     test_approve_without_root_ca,
     test_approve_already_reviewed,
     test_tampered_csr_signature_rejected,
+    test_concurrent_approve_race,
     test_list_pending_filters_correctly,
 ]
 

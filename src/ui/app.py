@@ -26,6 +26,7 @@ from db.connection import init_db, DEFAULT_DB_PATH
 from services.auth import seed_admin_if_empty
 from services.system_config import seed_defaults
 from services.audit import write_audit, Action
+from services.infra_manager import get_infra
 from ui.theme import apply_theme, COLOR
 
 
@@ -55,8 +56,15 @@ class App:
 
         self._bootstrap()
 
+        # Auto-start Prod CRL + OCSP servers ở port 8889/8888. Customer verify
+        # external cert (B.9) dùng 2 server này để check CRL + OCSP — không cần
+        # mở Verification Lab nữa. Lab server riêng ở 9889/9888 (start manual).
+        self.infra = get_infra()
+        self.infra.start_prod_servers()
+
         self.root = tk.Tk()
         self.root.title(WINDOW_TITLE)
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
         # Áp dụng design system (color tokens + font hierarchy + ttk styles).
         # Phải gọi sau khi tạo Tk root.
@@ -64,6 +72,14 @@ class App:
 
         self.content: "ttk.Frame | None" = None
         self.show_login()
+
+    def _on_close(self) -> None:
+        """Cleanup khi user đóng cửa sổ — shutdown servers + destroy Tk."""
+        try:
+            self.infra.stop_all()
+        except Exception:
+            pass
+        self.root.destroy()
 
     # ── Bootstrap ────────────────────────────────────────────────────────────
 

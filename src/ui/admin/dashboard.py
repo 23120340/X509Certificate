@@ -23,6 +23,9 @@ from ui.admin.csr_queue_view import CSRQueueFrame
 from ui.admin.cert_mgmt_view import CertMgmtFrame
 from ui.admin.revoke_queue_view import RevokeQueueFrame
 from ui.admin.crl_publish_view import CRLPublishFrame
+from services.infra_manager import (
+    get_infra, PROD_CRL_PORT, PROD_OCSP_PORT, LAB_CRL_PORT, LAB_OCSP_PORT,
+)
 
 
 class AdminDashboardFrame(ttk.Frame):
@@ -47,6 +50,7 @@ class AdminDashboardFrame(ttk.Frame):
         self.app = app
 
         build_dashboard_header(self, app, role_label="ADMIN")
+        self._build_infra_status_bar()
 
         body = ttk.Frame(self)
         body.pack(fill=tk.BOTH, expand=True)
@@ -54,6 +58,49 @@ class AdminDashboardFrame(ttk.Frame):
         self._build_sidebar(body)
         self._build_content_area(body)
         self._show_page("overview")
+
+    # ── Infra status bar ─────────────────────────────────────────────────────
+
+    def _build_infra_status_bar(self) -> None:
+        """Badge hiển thị trạng thái Prod + Lab CRL/OCSP servers.
+
+        Refresh sau mỗi page-switch (poll thủ công đủ — server state ít đổi).
+        """
+        bar = ttk.Frame(
+            self, padding=(SPACE["lg"], SPACE["xs"]),
+            style="Surface.TFrame",
+        )
+        bar.pack(fill=tk.X)
+
+        self._status_badges: "list[ttk.Label]" = []
+        for label_text in ("Prod CRL", "Prod OCSP", "Lab CRL", "Lab OCSP"):
+            badge = ttk.Label(
+                bar, text=f"  {label_text}: …  ",
+                style="Surface.TLabel",
+                font=font("caption"),
+                padding=(SPACE["xs"], SPACE["xxs"]),
+            )
+            badge.pack(side=tk.LEFT, padx=(0, SPACE["xs"]))
+            self._status_badges.append(badge)
+
+        ttk.Separator(self, orient=tk.HORIZONTAL).pack(fill=tk.X)
+        self._refresh_status_badges()
+
+    def _refresh_status_badges(self) -> None:
+        """Đọc InfraManager state → đổ vào badge labels."""
+        st = get_infra().status()
+        ports = [PROD_CRL_PORT, PROD_OCSP_PORT, LAB_CRL_PORT, LAB_OCSP_PORT]
+        flags = [st["prod_crl"], st["prod_ocsp"], st["lab_crl"], st["lab_ocsp"]]
+        names = ["Prod CRL", "Prod OCSP", "Lab CRL", "Lab OCSP"]
+
+        for badge, name, port, on in zip(self._status_badges, names, ports, flags):
+            mark = "ON" if on else "OFF"
+            color = COLOR.get("success", "#16a34a") if on \
+                else COLOR.get("text_subtle", "#888")
+            badge.configure(
+                text=f"  {name}: {mark} :{port}  ",
+                foreground=color,
+            )
 
     # ── Sidebar ───────────────────────────────────────────────────────────────
 
@@ -104,6 +151,8 @@ class AdminDashboardFrame(ttk.Frame):
         }.get(key, self._page_overview)
 
         factory(self.content, self.app).pack(fill=tk.BOTH, expand=True)
+        # Refresh badge — Lab servers có thể vừa start/stop khi user mở Lab
+        self._refresh_status_badges()
 
     # ── Pages ─────────────────────────────────────────────────────────────────
 

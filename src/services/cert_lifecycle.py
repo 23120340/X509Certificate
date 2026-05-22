@@ -191,12 +191,14 @@ def renew_cert(
     admin_id: int,
     validity_days: int,
     db_path: str,
-    ocsp_url: str = "http://localhost:8888/ocsp",
-    crl_url:  str = "http://localhost:8889/crl.pem",
+    ocsp_url: "str | None" = None,
+    crl_url:  "str | None" = None,
 ) -> dict:
     """
     Phát hành cert MỚI giữ nguyên subject + public_key của cert cũ.
     Cert cũ KHÔNG bị revoke tự động — admin có thể revoke riêng nếu cần.
+
+    URLs mặc định lấy từ services.infra_manager.prod_* (tự khớp env override).
 
     Raise CertLifecycleError nếu:
       • cert_id không tồn tại
@@ -205,6 +207,12 @@ def renew_cert(
     """
     if validity_days < 1:
         raise CertLifecycleError("validity_days phải >= 1.")
+
+    # Resolve default URLs runtime
+    if ocsp_url is None or crl_url is None:
+        from services.infra_manager import prod_crl_url, prod_ocsp_url
+        if ocsp_url is None: ocsp_url = prod_ocsp_url()
+        if crl_url  is None: crl_url  = prod_crl_url()
 
     old = get_cert_detail(cert_id, db_path)
     if old is None:

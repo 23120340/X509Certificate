@@ -44,8 +44,8 @@ def create_server_cert_signed_by_ca(
     ca_private_key,
     common_name: str = "localhost",
     dns_names=None,
-    ocsp_url: str = "http://localhost:8888/ocsp",
-    crl_url: str = "http://localhost:8889/crl.pem",
+    ocsp_url: "str | None" = None,
+    crl_url: "str | None" = None,
     validity_days: int = 365,
     expired: bool = False,
 ):
@@ -58,9 +58,18 @@ def create_server_cert_signed_by_ca(
 
     Server cert KHÔNG còn là CA: BasicConstraints(ca=False).
     Thêm Extended Key Usage = serverAuth cho đúng vai trò TLS server cert.
+
+    URLs mặc định lấy từ `services.infra_manager` để tự động khớp với port
+    server thực tế (kể cả khi user override qua env PROD_*_PORT).
     """
     if dns_names is None:
         dns_names = ["localhost", "127.0.0.1"]
+    if ocsp_url is None:
+        from services.infra_manager import prod_ocsp_url
+        ocsp_url = prod_ocsp_url()
+    if crl_url is None:
+        from services.infra_manager import prod_crl_url
+        crl_url = prod_crl_url()
 
     subject = _server_subject(common_name)
     issuer = ca_cert.subject
@@ -137,8 +146,8 @@ def create_self_signed_cert(
     private_key,
     common_name: str = "localhost",
     dns_names=None,
-    ocsp_url: str = "http://localhost:8888/ocsp",
-    crl_url: str = "http://localhost:8889/crl.pem",
+    ocsp_url: "str | None" = None,
+    crl_url: "str | None" = None,
     validity_days: int = 365,
     expired: bool = False,
 ):
@@ -149,6 +158,12 @@ def create_self_signed_cert(
     """
     if dns_names is None:
         dns_names = ["localhost", "127.0.0.1"]
+    if ocsp_url is None:
+        from services.infra_manager import prod_ocsp_url
+        ocsp_url = prod_ocsp_url()
+    if crl_url is None:
+        from services.infra_manager import prod_crl_url
+        crl_url = prod_crl_url()
 
     subject = issuer = _server_subject(common_name)
 
@@ -328,8 +343,8 @@ def issue_cert_from_csr(
     ca_cert,
     ca_private_key,
     validity_days: int = 365,
-    ocsp_url: str = "http://localhost:8888/ocsp",
-    crl_url: str  = "http://localhost:8889/crl.pem",
+    ocsp_url: "str | None" = None,
+    crl_url: "str | None"  = None,
 ):
     """
     Phát hành cert end-entity từ CSR đã được CSR-owner ký.
@@ -338,8 +353,17 @@ def issue_cert_from_csr(
     nếu có. Caller chịu trách nhiệm verify chữ ký CSR TRƯỚC khi gọi hàm này
     (xem services/csr_admin.approve_csr).
 
+    URLs mặc định = prod CRL/OCSP (auto-khớp env override). Lab inject URL
+    riêng qua tham số.
+
     Trả về (cert, serial_number).
     """
+    if ocsp_url is None:
+        from services.infra_manager import prod_ocsp_url
+        ocsp_url = prod_ocsp_url()
+    if crl_url is None:
+        from services.infra_manager import prod_crl_url
+        crl_url = prod_crl_url()
     return _build_end_entity_cert(
         subject_name=csr.subject,
         public_key=csr.public_key(),
@@ -355,8 +379,8 @@ def reissue_cert_for_renewal(
     ca_cert,
     ca_private_key,
     validity_days: int = 365,
-    ocsp_url: str = "http://localhost:8888/ocsp",
-    crl_url: str  = "http://localhost:8889/crl.pem",
+    ocsp_url: "str | None" = None,
+    crl_url: "str | None"  = None,
 ):
     """
     Phát hành cert MỚI giữ nguyên subject + public_key của cert cũ.
@@ -368,6 +392,12 @@ def reissue_cert_for_renewal(
 
     Trả về (cert, serial_number).
     """
+    if ocsp_url is None:
+        from services.infra_manager import prod_ocsp_url
+        ocsp_url = prod_ocsp_url()
+    if crl_url is None:
+        from services.infra_manager import prod_crl_url
+        crl_url = prod_crl_url()
     return _build_end_entity_cert(
         subject_name=old_cert.subject,
         public_key=old_cert.public_key(),

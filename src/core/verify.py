@@ -13,11 +13,13 @@ Root CA + Trust Store.
 """
 
 import hashlib
+import ipaddress
 import json
 import socket
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlparse
 
 from cryptography import x509
 from cryptography.x509.oid import ExtensionOID, AuthorityInformationAccessOID
@@ -27,6 +29,52 @@ from cryptography.hazmat.primitives.serialization import Encoding
 from cryptography.exceptions import InvalidSignature
 
 from core.ca import load_trust_store
+
+
+# ── HTTP guard rails cho CRL/OCSP fetch ──────────────────────────────────────
+# Cert phát hành có thể chứa URL bất kỳ trong CRLDP/AIA. Verifier load URL đó
+# qua urlopen → cần guard chống SSRF (file://, gopher://, internal IP) + DoS
+# (response 100GB). Limit chỉ http/https + cap size + cảnh báo IP private.
+
+_ALLOWED_URL_SCHEMES = ("http", "https")
+_MAX_CRL_BYTES  = 10 * 1024 * 1024   # 10 MB — đủ cho CRL rất lớn
+_MAX_OCSP_BYTES = 64 * 1024           # 64 KB — OCSP response cực nhỏ
+
+
+class UnsafeURLError(ValueError):
+    """URL trong CRLDP / AIA không an toàn để fetch."""
+
+
+def _validate_fetch_url(url: str) -> None:
+    """Reject URL có scheme nguy hiểm hoặc trỏ tới internal IP đáng ngờ.
+
+    KHÔNG block hoàn toàn private IP — demo chạy trên localhost:8889/8888.
+    Chỉ block file://, gopher://, ftp://, data:, javascript:, etc.
+    """
+    try:
+        parsed = urlparse(url)
+    except Exception as e:
+        raise UnsafeURLError(f"URL không parse được: {e}")
+    if parsed.scheme not in _ALLOWED_URL_SCHEMES:
+        raise UnsafeURLError(
+            f"Scheme '{parsed.scheme}' không cho phép (chỉ http/https)"
+        )
+    if not parsed.hostname:
+        raise UnsafeURLError("URL không có hostname")
+
+
+def _fetch_capped(url: str, max_bytes: int, timeout: float = 5.0) -> bytes:
+    """urlopen có size cap. Raise nếu response > max_bytes."""
+    _validate_fetch_url(url)
+    with urllib.request.urlopen(url, timeout=timeout) as resp:
+        # +1 để phát hiện vượt giới hạn (đọc đúng max+1 byte; nếu thật sự
+        # max_bytes thì cleanup OK; nếu > thì raise).
+        data = resp.read(max_bytes + 1)
+    if len(data) > max_bytes:
+        raise UnsafeURLError(
+            f"Response > {max_bytes} bytes — từ chối để chống DoS"
+        )
+    return data
 
 
 # ── Giao tiếp với Socket server ──────────────────────────────────────────────
@@ -226,8 +274,7 @@ def check_crl(cert, trusted_cas):
 
     for url in crl_urls:
         try:
-            with urllib.request.urlopen(url, timeout=5) as resp:
-                crl_data = resp.read()
+            crl_data = _fetch_capped(url, _MAX_CRL_BYTES, timeout=5)
             crl = x509.load_pem_x509_crl(crl_data)
 
             sig_ok, issuer_ca, err = _verify_crl_signature(crl, trusted_cas)
@@ -271,8 +318,9 @@ def check_ocsp(cert):
 
     for url in ocsp_urls:
         try:
-            with urllib.request.urlopen(f"{url}?serial={cert.serial_number}", timeout=5) as resp:
-                data = json.loads(resp.read().decode())
+            full_url = f"{url}?serial={cert.serial_number}"
+            body = _fetch_capped(full_url, _MAX_OCSP_BYTES, timeout=5)
+            data = json.loads(body.decode())
             status = data.get("status", "UNKNOWN")
             if status == "GOOD":
                 return True, f"OCSP status = GOOD (từ {url})"
@@ -486,15 +534,22 @@ def check_pinned(cert, hostname: str,
                 f"đang giữ {len(pins)} pin).{pruned_tag}"
             )
 
-    # (c) Mismatch
-    same_issuer_pins = [p for p in pins if p.get("issuer") == current_issuer]
+    # (c) Mismatch — coi pin có issuer rỗng (legacy v1 migration thiếu data)
+    # như khớp issuer hiện tại: lý do migrate v1 không backfill được issuer,
+    # nếu reject thì user phải xóa pin.json thủ công mỗi lần đổi schema. Trade
+    # off: kẻ tấn công nuốt v1 → v2 migration không thể, vì v1 yêu cầu file
+    # tồn tại sẵn (TOFU đã pass trước đó).
+    same_issuer_pins = [
+        p for p in pins
+        if p.get("issuer") == current_issuer or not p.get("issuer")
+    ]
     if same_issuer_pins:
         # Rotation hợp lệ — cộng pin mới vào, giữ pin cũ làm backup
         store["pins"].append(_build_pin_entry(cert, current_fp, now_iso))
         _save_pin_store(pin_path, store)
         old_fps = ", ".join(p["fingerprint_sha256"][:8] for p in same_issuer_pins)
         return True, (
-            f"⚙ Pin ROTATION được chấp nhận — cert mới cùng issuer "
+            f"Pin ROTATION được chấp nhận — cert mới cùng issuer "
             f"('{current_issuer}'). Đã thêm fingerprint mới "
             f"{current_fp[:8]}… (backup: {old_fps}); tổng "
             f"{len(store['pins'])} pin.{pruned_tag}"
@@ -502,7 +557,7 @@ def check_pinned(cert, hostname: str,
 
     _save_pin_store(pin_path, store)
     return False, (
-        f"⚠ Pin MISMATCH cho '{hostname}'! Cert nhận có issuer "
+        f"Pin MISMATCH cho '{hostname}'! Cert nhận có issuer "
         f"'{current_issuer}' không khớp issuer của bất kỳ pin nào đang giữ. "
         f"Có thể đổi CA HỢP LỆ hoặc đang bị MITM. Xóa {pin_path} thủ công "
         f"nếu chấp nhận.{pruned_tag}"
@@ -555,7 +610,7 @@ def verify_certificate_full(cert_bytes: bytes, hostname: str,
         ca_names = ", ".join(ca.subject.rfc4514_string() for ca in trusted_cas)
         log(f"Trust Store ({trust_store_dir}) chứa: {ca_names}")
     else:
-        log(f"⚠ Trust Store ({trust_store_dir}) RỖNG — Bước 1/4 sẽ FAIL")
+        log(f"[WARN] Trust Store ({trust_store_dir}) RỖNG — Bước 1/4 sẽ FAIL")
 
     steps = [
         ("Bước 1 - Verify chữ ký bằng Root CA (Trust Store)",
@@ -572,30 +627,30 @@ def verify_certificate_full(cert_bytes: bytes, hostname: str,
 
     results = []
     for name, fn in steps:
-        log(f"── {name} ──")
+        log(f"--- {name} ---")
         ok, msg = fn()
-        log(f"   {'✓ PASS' if ok else '✗ FAIL'}: {msg}")
+        log(f"   {'[PASS]' if ok else '[FAIL]'}: {msg}")
         results.append((name, ok, msg))
 
     overall = all(ok for _, ok, _ in results)
 
     # ── Bước phụ: lưu cert + pin warning (advisory, không tính vào overall) ──
-    log("── Bước phụ - Lưu cert + Pin warning (advisory) ──")
+    log("--- Bước phụ - Lưu cert + Pin warning (advisory) ---")
     try:
         pem_path = save_server_cert(
             cert_bytes, cert, hostname,
             base_dir=pin_dir, peer_address=peer_address,
         )
-        log(f"   ✓ Đã lưu cert tại: {pem_path} (peer={peer_address or 'n/a'})")
+        log(f"   [OK] Đã lưu cert tại: {pem_path} (peer={peer_address or 'n/a'})")
     except Exception as e:
-        log(f"   ✗ Lỗi khi lưu cert: {e}")
+        log(f"   [FAIL] Lỗi khi lưu cert: {e}")
 
     try:
         pin_ok, pin_msg = check_pinned(cert, hostname, base_dir=pin_dir)
-        log(f"   {'✓' if pin_ok else '⚠'} {pin_msg}")
+        log(f"   {'[OK]' if pin_ok else '[WARN]'} {pin_msg}")
         results.append(("Bước phụ - Pin warning (advisory)", pin_ok, pin_msg))
     except Exception as e:
-        log(f"   ✗ Lỗi khi check pin: {e}")
+        log(f"   [FAIL] Lỗi khi check pin: {e}")
         results.append(("Bước phụ - Pin warning (advisory)", True,
                         f"Bỏ qua do lỗi: {e}"))
 

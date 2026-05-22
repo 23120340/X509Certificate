@@ -27,10 +27,12 @@ from cryptography import x509
 from core.crl import build_crl, save_crl, save_revoked_list
 from db.connection import conn_scope
 from services.ca_admin import load_active_root_ca_with_key, CAError
+from config import PROD_CRL_PATH, PROD_OCSP_DB_PATH
 
 
-DEFAULT_CRL_PATH      = "certs/crl.pem"
-DEFAULT_OCSP_DB_PATH  = "certs/ocsp_db.json"
+# Alias giữ tên cũ để các file dùng import này không phải đổi.
+DEFAULT_CRL_PATH      = PROD_CRL_PATH
+DEFAULT_OCSP_DB_PATH  = PROD_OCSP_DB_PATH
 DEFAULT_CRL_VALIDITY  = 7  # ngày
 
 

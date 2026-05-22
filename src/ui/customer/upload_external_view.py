@@ -11,9 +11,9 @@ Layout:
   • Verify dialog: nhập hostname → chạy `core.verify.verify_certificate_full`
                     với trust store của hệ thống → hiển thị 5 bước + tổng kết.
 
-Lưu ý: verify Bước 4 (CRL) + Bước 5 (OCSP) gọi HTTP đến URL trong cert. Nếu
-infra/crl_server + infra/ocsp_server chưa chạy thì 2 bước này sẽ FAIL với
-"Network error" — khởi động qua Verification Lab (admin) hoặc qua script.
+Lưu ý: verify Bước 4 (CRL) + Bước 5 (OCSP) gọi HTTP đến URL trong cert (Prod
+CRL :8889, Prod OCSP :8888). Prod servers tự khởi động cùng app trong
+`ui/app.py` — không cần thao tác thủ công nữa.
 """
 
 import os
@@ -30,7 +30,7 @@ from services.external_certs import (
 from ui.common import CertDetailDialog
 
 
-TRUST_STORE_DIR = "certs/trust_store"
+from config import TRUST_STORE_DIR
 
 
 class UploadExternalFrame(ttk.Frame):
@@ -345,16 +345,15 @@ class VerifyExternalDialog(tk.Toplevel):
         self.host_entry = ttk.Entry(top, width=36)
         self.host_entry.grid(row=0, column=1, sticky="ew", padx=4)
         self.host_entry.insert(0, default_host)
-        ttk.Button(top, text="▶ Chạy 5 bước",
+        ttk.Button(top, text="Chạy 5 bước",
                    command=self._run).grid(row=0, column=2, padx=4)
         top.columnconfigure(1, weight=1)
 
         ttk.Label(
             self,
             text=(
-                "Bước 4 (CRL) + Bước 5 (OCSP) cần infra/crl_server + "
-                "infra/ocsp_server đang chạy. Mở Verification Lab "
-                "(admin) để khởi động chúng."
+                "Bước 4 (CRL) + Bước 5 (OCSP) gọi tới Prod CRL/OCSP server "
+                "ở port 8889/8888 — đã tự khởi động cùng app."
             ),
             foreground="#888", font=font("caption"),
             padding=(12, 0, 12, 8), wraplength=740, justify=tk.LEFT,
@@ -388,8 +387,8 @@ class VerifyExternalDialog(tk.Toplevel):
 
     def _set_banner(self, status: str) -> None:
         mapping = {
-            "pass":  ("#27ae60", "✓  PASS — Cert hợp lệ"),
-            "fail":  ("#c0392b", "✗  FAIL — Cert KHÔNG hợp lệ"),
+            "pass":  ("#27ae60", "PASS — Cert hợp lệ"),
+            "fail":  ("#c0392b", "FAIL — Cert KHÔNG hợp lệ"),
         }
         color, text = mapping[status]
         self.banner.config(bg=color)
@@ -405,19 +404,19 @@ class VerifyExternalDialog(tk.Toplevel):
         try:
             publish_active_to_trust_store(self.app.db_path, TRUST_STORE_DIR)
         except Exception as e:
-            self._log(f"⚠ Không publish được trust store: {e}", "fail")
+            self._log(f"[WARN] Không publish được trust store: {e}", "fail")
 
         if not os.path.isdir(TRUST_STORE_DIR):
             self._log(
-                f"⚠ Trust store dir {TRUST_STORE_DIR} không tồn tại. "
+                f"[WARN] Trust store dir {TRUST_STORE_DIR} không tồn tại. "
                 f"Admin cần tạo Root CA trước.", "fail",
             )
             return
 
         self.log_text.delete("1.0", tk.END)
-        self._log(f"► Verify external cert #{self.cert_rec['id']} với hostname '{hostname}'", "head")
+        self._log(f"Verify external cert #{self.cert_rec['id']} với hostname '{hostname}'", "head")
         self._log("")
-        self._log("╔══════ BẮT ĐẦU 5 BƯỚC XÁC THỰC ══════╗", "head")
+        self._log("===== BẮT ĐẦU 5 BƯỚC XÁC THỰC =====", "head")
 
         from core.verify import verify_certificate_full
         try:
@@ -430,11 +429,11 @@ class VerifyExternalDialog(tk.Toplevel):
                 peer_address=None,
             )
         except Exception as e:
-            self._log(f"✗ Lỗi verify: {type(e).__name__}: {e}", "fail")
+            self._log(f"[ERROR] Lỗi verify: {type(e).__name__}: {e}", "fail")
             self._set_banner("fail")
             return
 
-        self._log("╚══════════════ KẾT QUẢ ══════════════╝", "head")
+        self._log("===== KẾT QUẢ =====", "head")
         for step_name, ok, _ in results:
             tag = "ok" if ok else "fail"
             self._log(f"   [{'PASS' if ok else 'FAIL'}] {step_name}", tag)

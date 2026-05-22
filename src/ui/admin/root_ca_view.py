@@ -27,10 +27,11 @@ from services.ca_admin import (
     publish_active_to_trust_store,
 )
 from services.system_config import get_config, get_int_config
+from config import TRUST_STORE_DIR
 
 
 DEFAULT_ROOT_CA_CN = "X509 Demo Root CA"
-DEFAULT_TRUST_STORE_DIR = "certs/trust_store"
+DEFAULT_TRUST_STORE_DIR = TRUST_STORE_DIR
 
 
 class RootCAFrame(ttk.Frame):

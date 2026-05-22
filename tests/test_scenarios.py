@@ -40,8 +40,11 @@ BASE_PORT = 19001  # server test dùng port 19001, 19002, ...
 from core.ca import load_or_create_issuer, publish_root_ca_to_trust_store
 from legacy.server_manager import ServerManager
 from core.crl import build_and_publish_crl
-from infra.ocsp_server import OCSPHandler, start_ocsp_server
+from infra.ocsp_server import start_ocsp_server
 from infra.crl_server import start_crl_server
+
+# OCSP state dict — set bởi setup(), share giữa các test để toggle enabled.
+_ocsp_state: dict = None
 from core.verify import fetch_certificate, verify_certificate_full, prune_expired_pins
 
 
@@ -59,7 +62,7 @@ def _next_port() -> int:
 
 def setup():
     """Khởi tạo thư mục, issuer, CRL/OCSP server cho test."""
-    global _mgr
+    global _mgr, _ocsp_state
     os.makedirs(TEST_DIR, exist_ok=True)
 
     issuer_cert, issuer_key = load_or_create_issuer(TEST_ISSUER_CERT, TEST_ISSUER_KEY)
@@ -72,12 +75,12 @@ def setup():
         host="localhost", port=TEST_CRL_PORT,
         crl_path=TEST_CRL_PATH, log_callback=None,
     )
-    # Khởi động OCSP server
-    OCSPHandler.enabled = True
-    start_ocsp_server(
+    # Khởi động OCSP server — lưu state dict để toggle enabled sau này
+    _server, _ocsp_state = start_ocsp_server(
         host="localhost", port=TEST_OCSP_PORT,
         revoked_list_path=TEST_OCSP_DB, log_callback=None,
     )
+    _ocsp_state["enabled"] = True
     # Tạo CRL rỗng để CRL server có file phục vụ
     build_and_publish_crl(issuer_cert, issuer_key, TEST_OCSP_DB, TEST_CRL_PATH)
 
@@ -201,7 +204,7 @@ def test_g_ocsp_down():
         Bước 4 (CRL) vẫn FAIL — CRL làm fallback
         Bước 5 (OCSP) FAIL vì lỗi mạng (503)
     """
-    OCSPHandler.enabled = False
+    _ocsp_state["enabled"] = False
     try:
         entry = _mgr.servers.get("test-revoked-both")
         assert entry, "[g] Không tìm thấy server 'test-revoked-both'"
@@ -213,7 +216,7 @@ def test_g_ocsp_down():
             f"[g] Bước 5 phải báo lỗi OCSP down: {step5_msg}"
         print("  [g] PASS ✓ — OCSP down: Bước 4 vẫn bắt được (CRL fallback), Bước 5 lỗi mạng")
     finally:
-        OCSPHandler.enabled = True
+        _ocsp_state["enabled"] = True
 
 
 def test_h_tampered():

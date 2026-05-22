@@ -94,11 +94,11 @@ SPACE = {
 # Các tên phía sau chỉ là fallback an toàn nếu font chính không có sẵn trên
 # máy khác — primary luôn là 2 font đã chọn.
 HEADING_FONT_CHAIN = [
-    "Montserrat",     # fallback nếu DFVN Float không có
+    "Montserrat",     
 ]
 
 BODY_FONT_CHAIN = [
-    "Montserrat",     # body chính
+    "Montserrat",  
 ]
 
 # Mono dùng chung BODY chain — chấp nhận mất alignment của PEM/serial để giữ

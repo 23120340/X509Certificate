@@ -14,6 +14,8 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 from ui.theme import font
+from ui.widgets.status_table import StatusFilterTreeFrame
+from ui.widgets.modal import init_modal, make_button_row
 from services.audit import write_audit, Action
 from services.csr_admin import (
     list_all_csr, get_csr_detail, approve_csr, reject_csr, CSRAdminError,
@@ -48,56 +50,58 @@ class CSRQueueFrame(ttk.Frame):
             foreground="#666", wraplength=720, justify=tk.LEFT,
         ).pack(anchor="w", pady=(0, 12))
 
-        self._build_toolbar()
-        self._build_tree()
+        # Pack actions TRƯỚC table với side=BOTTOM → Tk reserve space cho
+        # action bar trước, table mới fill phần còn lại. Nếu pack ngược lại,
+        # table fill=BOTH+expand=True sẽ ăn hết, đẩy bar ra ngoài viewport.
         self._build_actions()
+        self._build_table()
         self.refresh()
 
-    def _build_toolbar(self) -> None:
-        bar = ttk.Frame(self)
-        bar.pack(fill=tk.X, pady=(0, 8))
-        ttk.Label(bar, text="Filter status:").pack(side=tk.LEFT, padx=(0, 4))
-        self.status_combo = ttk.Combobox(
-            bar, values=("pending", "approved", "rejected", "all"),
-            state="readonly", width=12,
+    def _build_table(self) -> None:
+        self.table = StatusFilterTreeFrame(
+            self,
+            columns=[
+                ("id",           "ID",          50),
+                ("requester",    "Requester",  110),
+                ("common_name",  "Domain (CN)", 180),
+                ("san",          "SAN",         220),
+                ("status",       "Status",       80),
+                ("submitted_at", "Submit",      140),
+                ("reviewed_at",  "Reviewed",    140),
+            ],
+            status_values=("pending", "approved", "rejected", "all"),
+            status_colors=STATUS_COLORS,
+            default_status_index=0,
+            fetch_fn=self._fetch_csrs,
+            row_mapper=self._csr_to_values,
+            count_unit="CSR",
         )
-        self.status_combo.current(0)
-        self.status_combo.pack(side=tk.LEFT)
-        self.status_combo.bind("<<ComboboxSelected>>",
-                               lambda e: self.refresh())
-        ttk.Button(bar, text="Refresh",
-                   command=self.refresh).pack(side=tk.LEFT, padx=(8, 0))
-        self.count_label = ttk.Label(bar, text="", foreground="#666")
-        self.count_label.pack(side=tk.RIGHT)
+        self.table.pack(fill=tk.BOTH, expand=True)
+        self.table.bind_double_click(self.on_view)
 
-    def _build_tree(self) -> None:
-        cols = ("id", "requester", "common_name", "san", "status",
-                "submitted_at", "reviewed_at")
-        self.tree = ttk.Treeview(self, columns=cols, show="headings", height=14)
-        labels = {
-            "id": "ID", "requester": "Requester",
-            "common_name": "Domain (CN)", "san": "SAN",
-            "status": "Status",
-            "submitted_at": "Submit", "reviewed_at": "Reviewed",
-        }
-        widths = {"id": 50, "requester": 110, "common_name": 180,
-                  "san": 220, "status": 80,
-                  "submitted_at": 140, "reviewed_at": 140}
-        for c in cols:
-            self.tree.heading(c, text=labels[c])
-            self.tree.column(c, width=widths[c], anchor="w")
+    def _fetch_csrs(self, status: str) -> list:
+        return list_all_csr(
+            self.app.db_path,
+            status=None if status == "all" else status,
+        )
 
-        vsb = ttk.Scrollbar(self, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=vsb.set)
-        self.tree.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
-        vsb.place(in_=self.tree, relx=1.0, x=-1, rely=0, relheight=1.0, anchor="ne")
-
-        for s, color in STATUS_COLORS.items():
-            self.tree.tag_configure(s, foreground=color)
+    def _csr_to_values(self, c: dict) -> tuple:
+        san_str = ", ".join(c["san_list"]) if c["san_list"] else "—"
+        reviewed = (
+            c["reviewed_at"][:19].replace("T", " ")
+            if c.get("reviewed_at") else "—"
+        )
+        return (
+            c["id"],
+            c.get("requester_username") or f"uid={c['requester_id']}",
+            c["common_name"], san_str, c["status"],
+            c["submitted_at"][:19].replace("T", " "),
+            reviewed,
+        )
 
     def _build_actions(self) -> None:
         bar = ttk.Frame(self)
-        bar.pack(fill=tk.X, pady=(8, 0))
+        bar.pack(fill=tk.X, side=tk.BOTTOM, pady=(8, 0))
         ttk.Button(bar, text="📋 Xem chi tiết",
                    command=self.on_view).pack(side=tk.LEFT)
         ttk.Button(bar, text="✅ Approve",
@@ -106,35 +110,10 @@ class CSRQueueFrame(ttk.Frame):
                    command=self.on_reject).pack(side=tk.LEFT, padx=(8, 0))
 
     def refresh(self) -> None:
-        status = self.status_combo.get()
-        items = list_all_csr(
-            self.app.db_path,
-            status=None if status == "all" else status,
-        )
-        for iid in self.tree.get_children():
-            self.tree.delete(iid)
-        for c in items:
-            san_str = ", ".join(c["san_list"]) if c["san_list"] else "—"
-            self.tree.insert(
-                "", tk.END, iid=str(c["id"]),
-                values=(
-                    c["id"],
-                    c.get("requester_username") or f"uid={c['requester_id']}",
-                    c["common_name"], san_str, c["status"],
-                    c["submitted_at"][:19].replace("T", " "),
-                    (c["reviewed_at"] or "—")[:19].replace("T", " ") if c.get("reviewed_at") else "—",
-                ),
-                tags=(c["status"],),
-            )
-        self.count_label.config(text=f"{len(items)} CSR")
+        self.table.refresh()
 
     def _selected_id(self) -> "int | None":
-        sel = self.tree.selection()
-        if not sel:
-            messagebox.showwarning("Chưa chọn",
-                                    "Hãy chọn CSR trong bảng.")
-            return None
-        return int(sel[0])
+        return self.table.selected_id()
 
     # ── Actions ───────────────────────────────────────────────────────────────
 
@@ -230,18 +209,13 @@ class ApproveCSRDialog(tk.Toplevel):
         self.rec = rec
         self.on_done = on_done
 
-        self.title(f"Approve CSR #{rec['id']}")
-        self.geometry("440x250")
-        self.resizable(False, False)
-        self.transient(parent)
-        self.grab_set()
-
         default_validity = get_int_config(
             "default_validity_days", app.db_path, 365,
         )
 
-        frame = ttk.Frame(self, padding=16)
-        frame.pack(fill=tk.BOTH, expand=True)
+        frame = init_modal(self, parent=parent,
+                           title=f"Approve CSR #{rec['id']}",
+                           geometry="440x250")
 
         ttk.Label(
             frame,
@@ -263,12 +237,8 @@ class ApproveCSRDialog(tk.Toplevel):
             foreground="#666", font=font("caption"),
         ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(8, 0))
 
-        btn_row = ttk.Frame(frame)
-        btn_row.grid(row=99, column=0, columnspan=2, pady=(16, 0), sticky="e")
-        ttk.Button(btn_row, text="Phát hành",
-                   command=self.on_submit).pack(side=tk.RIGHT, padx=4)
-        ttk.Button(btn_row, text="Hủy",
-                   command=self.destroy).pack(side=tk.RIGHT, padx=4)
+        make_button_row(frame, submit_label="Phát hành",
+                        submit_command=self.on_submit)
         self.validity_entry.focus_set()
         self.validity_entry.select_range(0, tk.END)
 
@@ -321,14 +291,9 @@ class RejectCSRDialog(tk.Toplevel):
         self.rec = rec
         self.on_done = on_done
 
-        self.title(f"Reject CSR #{rec['id']}")
-        self.geometry("440x280")
-        self.resizable(False, False)
-        self.transient(parent)
-        self.grab_set()
-
-        frame = ttk.Frame(self, padding=16)
-        frame.pack(fill=tk.BOTH, expand=True)
+        frame = init_modal(self, parent=parent,
+                           title=f"Reject CSR #{rec['id']}",
+                           geometry="440x280")
 
         ttk.Label(
             frame,
@@ -342,12 +307,8 @@ class RejectCSRDialog(tk.Toplevel):
         self.reason_text = tk.Text(frame, height=6, width=44, wrap=tk.WORD)
         self.reason_text.pack(fill=tk.BOTH, expand=True)
 
-        btn_row = ttk.Frame(frame)
-        btn_row.pack(fill=tk.X, pady=(12, 0))
-        ttk.Button(btn_row, text="Reject",
-                   command=self.on_submit).pack(side=tk.RIGHT, padx=4)
-        ttk.Button(btn_row, text="Hủy",
-                   command=self.destroy).pack(side=tk.RIGHT, padx=4)
+        make_button_row(frame, submit_label="Reject",
+                        submit_command=self.on_submit)
         self.reason_text.focus_set()
 
     def on_submit(self) -> None:

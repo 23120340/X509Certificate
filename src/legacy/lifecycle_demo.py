@@ -26,20 +26,22 @@ from ui.theme import font
 from core.ca import load_or_create_issuer, publish_root_ca_to_trust_store
 from legacy.server_manager import ServerManager, FLAVORS
 from core.crl import build_and_publish_crl
-from infra.ocsp_server import OCSPHandler, start_ocsp_server
-from infra.crl_server import start_crl_server
 from core.verify import fetch_certificate, verify_certificate_full
+from services.infra_manager import get_infra
 
-# ── Đường dẫn và cổng mặc định ───────────────────────────────────────────────
-CERT_DIR        = "certs"
-ISSUER_CERT     = os.path.join(CERT_DIR, "issuer.crt")
-ISSUER_KEY      = os.path.join(CERT_DIR, "issuer.key")
-CRL_PATH        = os.path.join(CERT_DIR, "crl.pem")
-OCSP_DB_PATH    = os.path.join(CERT_DIR, "ocsp_db.json")
-TRUST_STORE_DIR = os.path.join(CERT_DIR, "trust_store")
+# ── Đường dẫn và cổng Lab (tách riêng khỏi production) ───────────────────────
+# Lab dùng directory + port riêng để không đụng độ với Prod CRL/OCSP servers
+# do app chính tự khởi động (xem services/infra_manager.py).
+LAB_DIR         = "lab"
+ISSUER_CERT     = os.path.join(LAB_DIR, "issuer.crt")
+ISSUER_KEY      = os.path.join(LAB_DIR, "issuer.key")
+CRL_PATH        = os.path.join(LAB_DIR, "crl.pem")
+OCSP_DB_PATH    = os.path.join(LAB_DIR, "ocsp_db.json")
+TRUST_STORE_DIR = os.path.join(LAB_DIR, "trust_store")
+CERT_DIR        = LAB_DIR  # alias cho ServerManager — cert files đẻ vào lab/
 
-OCSP_PORT = 8888
-CRL_PORT  = 8889
+OCSP_PORT = 9888    # Lab OCSP — prod ở 8888
+CRL_PORT  = 9889    # Lab CRL  — prod ở 8889
 OCSP_URL  = f"http://localhost:{OCSP_PORT}/ocsp"
 CRL_URL   = f"http://localhost:{CRL_PORT}/crl.pem"
 
@@ -59,8 +61,8 @@ class App:
         root.geometry("1280x860")
         root.minsize(1000, 720)
 
-        self.crl_started  = False
-        self.ocsp_started = False
+        # OCSP state — set khi start Lab servers, dùng cho toggle enabled
+        self.ocsp_state   = None
         self.ocsp_enabled_var = tk.BooleanVar(value=True)
 
         os.makedirs(CERT_DIR, exist_ok=True)
@@ -256,27 +258,24 @@ class App:
     # ── Hạ tầng ──────────────────────────────────────────────────────────────
 
     def on_start_crl(self):
-        if self.crl_started:
-            self.log("[CRL] Đã chạy rồi.", "info"); return
+        """Start Lab CRL+OCSP qua InfraManager (port 9889/9888, path lab/)."""
+        infra = get_infra()
+        if infra.is_lab_running():
+            self.log("[CRL] Lab servers đã chạy rồi.", "info"); return
         try:
-            start_crl_server(
-                host="localhost", port=CRL_PORT,
-                crl_path=CRL_PATH, log_callback=self._thread_log,
-            )
-            self.crl_started = True
+            infra.start_lab_servers(log_callback=self._thread_log)
+            self.ocsp_state = infra.get_lab_ocsp_state()
         except Exception as e:
             self.log(f"[CRL] LỖI: {e}", "fail")
 
     def on_start_ocsp(self):
-        if self.ocsp_started:
-            self.log("[OCSP] Đã chạy rồi.", "info"); return
+        """Cùng entrypoint — InfraManager start cả CRL+OCSP cho Lab."""
+        infra = get_infra()
+        if infra.is_lab_running():
+            self.log("[OCSP] Lab servers đã chạy rồi.", "info"); return
         try:
-            start_ocsp_server(
-                host="localhost", port=OCSP_PORT,
-                revoked_list_path=OCSP_DB_PATH,
-                log_callback=self._thread_log,
-            )
-            self.ocsp_started = True
+            infra.start_lab_servers(log_callback=self._thread_log)
+            self.ocsp_state = infra.get_lab_ocsp_state()
         except Exception as e:
             self.log(f"[OCSP] LỖI: {e}", "fail")
 
@@ -295,10 +294,13 @@ class App:
 
     def on_toggle_ocsp(self):
         enabled = self.ocsp_enabled_var.get()
-        OCSPHandler.enabled = enabled
-        state = "BẬT" if enabled else "TẮT"
+        if self.ocsp_state is None:
+            self.log("[OCSP] Server chưa chạy — bấm Start OCSP Server trước.", "info")
+            return
+        self.ocsp_state["enabled"] = enabled
+        label = "BẬT" if enabled else "TẮT"
         tag   = "ok" if enabled else "fail"
-        self.log(f"[OCSP] Responder đã {state}.", tag)
+        self.log(f"[OCSP] Responder đã {label}.", tag)
 
     # ── Thêm / Xóa server ────────────────────────────────────────────────────
 
@@ -500,12 +502,16 @@ class App:
 
     def _on_close(self):
         """
-        Đóng app: chỉ dừng socket, KHÔNG xóa cert file. Mục đích là để lần
-        khởi động sau, cert/key của các 'valid' server còn trên disk và
-        ServerManager có thể reuse → pin warning của client ổn định qua
-        các lần mở/đóng GUI.
+        Đóng app: dừng socket demo + Lab CRL/OCSP server. KHÔNG xóa cert file,
+        để lần khởi động sau, cert/key của các 'valid' server còn trên disk và
+        ServerManager có thể reuse → pin warning của client ổn định qua các
+        lần mở/đóng GUI.
         """
         self.mgr.remove_all(cleanup_files=False)
+        try:
+            get_infra().stop_lab_servers()
+        except Exception:
+            pass
         self.root.destroy()
 
 

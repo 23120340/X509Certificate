@@ -18,8 +18,11 @@ Module này chịu trách nhiệm:
   - Publish Root CA cert ra Trust Store để client có thể đọc.
 """
 
+import logging
 import os
 import shutil
+import stat
+import sys
 from datetime import datetime, timedelta, timezone
 
 from cryptography import x509
@@ -27,8 +30,37 @@ from cryptography.x509.oid import NameOID
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
+_log = logging.getLogger("x509ca.core.ca")
 
 ROOT_CA_COMMON_NAME = "X509 Demo Root CA"
+
+
+def _restrict_key_file_permissions(path: str) -> None:
+    """Hạn chế quyền đọc/ghi file private key về owner-only.
+
+    Linux/macOS: chmod 0600 (rw cho owner, không cho group/other).
+    Windows: dùng icacls để gỡ inherit và chỉ giữ quyền của current user.
+    Best-effort — log warning nếu fail, không raise (vì là feature legacy
+    path; production lưu key encrypted-at-rest trong DB).
+    """
+    try:
+        if sys.platform == "win32":
+            # icacls: gỡ inheritance + grant Full chỉ cho current user
+            import subprocess
+            user = os.environ.get("USERNAME", "")
+            if user:
+                subprocess.run(
+                    ["icacls", path, "/inheritance:r", "/grant:r",
+                     f"{user}:(F)"],
+                    check=False, capture_output=True, timeout=5,
+                )
+        else:
+            os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)  # 0600
+    except Exception as e:
+        _log.warning(
+            "Không hạn chế được quyền file %s: %s — key root đang lộ cho user khác trên máy!",
+            path, e,
+        )
 
 
 def load_or_create_issuer(cert_path: str, key_path: str):
@@ -89,6 +121,10 @@ def load_or_create_issuer(cert_path: str, key_path: str):
             serialization.PrivateFormat.PKCS8,
             serialization.NoEncryption(),
         ))
+    # Root CA private key dùng cho legacy/lab — không có encrypt-at-rest như
+    # production path (ca_admin.py). Hạn chế quyền OS-level để giảm rủi ro
+    # local user khác đọc được file.
+    _restrict_key_file_permissions(key_path)
     return cert, key
 
 

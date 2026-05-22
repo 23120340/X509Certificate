@@ -13,6 +13,8 @@ Các key chuẩn:
   default_key_size        Độ dài khóa RSA mặc định (string int, vd '2048').
   default_validity_days   Thời hạn cert mặc định (string int, vd '365').
   root_ca_validity_days   Thời hạn Root CA mặc định (string int, vd '3650').
+  prod_crl_url            URL CRL Distribution Points nhúng vào cert prod.
+  prod_ocsp_url           URL OCSP Responder nhúng vào cert prod.
 """
 
 from datetime import datetime, timezone
@@ -27,6 +29,8 @@ DEFAULTS: "dict[str, str]" = {
     "default_key_size":      "2048",
     "default_validity_days": "365",
     "root_ca_validity_days": "3650",
+    "prod_crl_url":          "http://localhost:8889/crl.pem",
+    "prod_ocsp_url":         "http://localhost:8888/ocsp",
 }
 
 # Whitelist các key user được phép set qua UI (bảo vệ khỏi typo / inject).

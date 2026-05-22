@@ -12,6 +12,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 from ui.theme import font
+from ui.widgets.status_table import StatusFilterTreeFrame
 from services.cert_lifecycle import list_certs_for_owner, get_cert_detail
 from ui.common import CertDetailDialog
 
@@ -42,90 +43,60 @@ class MyCertsFrame(ttk.Frame):
             foreground="#666", wraplength=720, justify=tk.LEFT,
         ).pack(anchor="w", pady=(0, 12))
 
-        self._build_toolbar()
-        self._build_tree()
+        # Pack actions trước table để action bar không bị đẩy ra ngoài
+        # viewport khi cửa sổ thấp.
         self._build_actions()
+        self._build_table()
         self.refresh()
 
-    def _build_toolbar(self) -> None:
-        bar = ttk.Frame(self)
-        bar.pack(fill=tk.X, pady=(0, 8))
-        ttk.Label(bar, text="Filter:").pack(side=tk.LEFT, padx=(0, 4))
-        self.status_combo = ttk.Combobox(
-            bar, values=("active", "expired", "revoked", "all"),
-            state="readonly", width=12,
+    def _build_table(self) -> None:
+        self.table = StatusFilterTreeFrame(
+            self,
+            columns=[
+                ("id",               "ID",          50),
+                ("common_name",      "Domain (CN)",180),
+                ("serial",           "Serial",     220),
+                ("status",           "Status",      80),
+                ("not_valid_before", "Hiệu lực từ",140),
+                ("not_valid_after",  "Đến",        140),
+            ],
+            status_values=("active", "expired", "revoked", "all"),
+            status_colors=STATUS_COLORS,
+            default_status_index=3,
+            fetch_fn=self._fetch_my_certs,
+            row_mapper=self._cert_to_values,
+            count_unit="cert",
         )
-        self.status_combo.current(3)
-        self.status_combo.pack(side=tk.LEFT)
-        self.status_combo.bind("<<ComboboxSelected>>",
-                               lambda e: self.refresh())
-        ttk.Button(bar, text="Refresh",
-                   command=self.refresh).pack(side=tk.LEFT, padx=(8, 0))
-        self.count_label = ttk.Label(bar, text="", foreground="#666")
-        self.count_label.pack(side=tk.RIGHT)
+        self.table.pack(fill=tk.BOTH, expand=True)
+        self.table.bind_double_click(self.on_view)
 
-    def _build_tree(self) -> None:
-        cols = ("id", "common_name", "serial", "status",
-                "not_valid_before", "not_valid_after")
-        self.tree = ttk.Treeview(self, columns=cols, show="headings", height=14)
-        labels = {
-            "id": "ID", "common_name": "Domain (CN)",
-            "serial": "Serial", "status": "Status",
-            "not_valid_before": "Hiệu lực từ",
-            "not_valid_after": "Đến",
-        }
-        widths = {"id": 50, "common_name": 180, "serial": 220,
-                  "status": 80,
-                  "not_valid_before": 140, "not_valid_after": 140}
-        for c in cols:
-            self.tree.heading(c, text=labels[c])
-            self.tree.column(c, width=widths[c], anchor="w")
+    def _fetch_my_certs(self, status: str) -> list:
+        return list_certs_for_owner(
+            self.app.session["id"], self.app.db_path,
+            status=None if status == "all" else status,
+        )
 
-        vsb = ttk.Scrollbar(self, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=vsb.set)
-        self.tree.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
-        vsb.place(in_=self.tree, relx=1.0, x=-1, rely=0, relheight=1.0,
-                  anchor="ne")
-
-        for s, color in STATUS_COLORS.items():
-            self.tree.tag_configure(s, foreground=color)
+    def _cert_to_values(self, c: dict) -> tuple:
+        serial_str = c["serial_hex"][:32] + ("…" if len(c["serial_hex"]) > 32 else "")
+        return (
+            c["id"], c["common_name"], serial_str, c["status"],
+            c["not_valid_before"][:19].replace("T", " "),
+            c["not_valid_after"][:19].replace("T", " "),
+        )
 
     def _build_actions(self) -> None:
         bar = ttk.Frame(self)
-        bar.pack(fill=tk.X, pady=(8, 0))
+        bar.pack(fill=tk.X, side=tk.BOTTOM, pady=(8, 0))
         ttk.Button(bar, text="📋 Xem chi tiết",
                    command=self.on_view).pack(side=tk.LEFT)
         ttk.Button(bar, text="💾 Tải về (Save as)",
                    command=self.on_download).pack(side=tk.LEFT, padx=(8, 0))
 
     def refresh(self) -> None:
-        status = self.status_combo.get()
-        items = list_certs_for_owner(
-            self.app.session["id"], self.app.db_path,
-            status=None if status == "all" else status,
-        )
-        for iid in self.tree.get_children():
-            self.tree.delete(iid)
-        for c in items:
-            self.tree.insert(
-                "", tk.END, iid=str(c["id"]),
-                values=(
-                    c["id"], c["common_name"],
-                    c["serial_hex"][:32] + ("…" if len(c["serial_hex"]) > 32 else ""),
-                    c["status"],
-                    c["not_valid_before"][:19].replace("T", " "),
-                    c["not_valid_after"][:19].replace("T", " "),
-                ),
-                tags=(c["status"],),
-            )
-        self.count_label.config(text=f"{len(items)} cert")
+        self.table.refresh()
 
     def _selected_id(self) -> "int | None":
-        sel = self.tree.selection()
-        if not sel:
-            messagebox.showwarning("Chưa chọn", "Hãy chọn cert trong bảng.")
-            return None
-        return int(sel[0])
+        return self.table.selected_id()
 
     def on_view(self) -> None:
         cert_id = self._selected_id()

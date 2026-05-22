@@ -13,6 +13,8 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 from ui.theme import font
+from ui.widgets.status_table import StatusFilterTreeFrame
+from ui.widgets.modal import init_modal, make_button_row
 from services.audit import write_audit, Action
 from services.cert_lifecycle import (
     list_all_certs, get_cert_detail, revoke_cert, renew_cert,
@@ -49,58 +51,54 @@ class CertMgmtFrame(ttk.Frame):
             foreground="#666", wraplength=720, justify=tk.LEFT,
         ).pack(anchor="w", pady=(0, 12))
 
-        self._build_toolbar()
-        self._build_tree()
+        # Pack actions trước table — table fill=BOTH+expand=True sẽ chiếm
+        # toàn bộ không gian còn lại; nếu pack ngược, action bar bị đẩy
+        # ra ngoài viewport ở cửa sổ thấp.
         self._build_actions()
+        self._build_table()
         self.refresh()
 
-    def _build_toolbar(self) -> None:
-        bar = ttk.Frame(self)
-        bar.pack(fill=tk.X, pady=(0, 8))
-        ttk.Label(bar, text="Filter:").pack(side=tk.LEFT, padx=(0, 4))
-        self.status_combo = ttk.Combobox(
-            bar, values=("active", "expired", "revoked", "all"),
-            state="readonly", width=12,
+    def _build_table(self) -> None:
+        self.table = StatusFilterTreeFrame(
+            self,
+            columns=[
+                ("id",              "ID",          50),
+                ("owner",           "Owner",      100),
+                ("common_name",     "Domain (CN)",160),
+                ("serial",          "Serial",     180),
+                ("status",          "Status",      80),
+                ("not_valid_after", "Hết hạn",    140),
+                ("renewed_from",    "Renew từ",    80),
+            ],
+            status_values=("active", "expired", "revoked", "all"),
+            status_colors=STATUS_COLORS,
+            default_status_index=3,  # "all"
+            fetch_fn=self._fetch_certs,
+            row_mapper=self._cert_to_values,
+            count_unit="cert",
         )
-        self.status_combo.current(3)  # "all" mặc định
-        self.status_combo.pack(side=tk.LEFT)
-        self.status_combo.bind("<<ComboboxSelected>>",
-                               lambda e: self.refresh())
-        ttk.Button(bar, text="Refresh",
-                   command=self.refresh).pack(side=tk.LEFT, padx=(8, 0))
-        self.count_label = ttk.Label(bar, text="", foreground="#666")
-        self.count_label.pack(side=tk.RIGHT)
+        self.table.pack(fill=tk.BOTH, expand=True)
+        self.table.bind_double_click(self.on_view)
 
-    def _build_tree(self) -> None:
-        cols = ("id", "owner", "common_name", "serial",
-                "status", "not_valid_after", "renewed_from")
-        self.tree = ttk.Treeview(self, columns=cols, show="headings", height=14)
-        labels = {
-            "id": "ID", "owner": "Owner",
-            "common_name": "Domain (CN)", "serial": "Serial",
-            "status": "Status",
-            "not_valid_after": "Hết hạn",
-            "renewed_from": "Renew từ",
-        }
-        widths = {"id": 50, "owner": 100, "common_name": 160,
-                  "serial": 180, "status": 80,
-                  "not_valid_after": 140, "renewed_from": 80}
-        for c in cols:
-            self.tree.heading(c, text=labels[c])
-            self.tree.column(c, width=widths[c], anchor="w")
+    def _fetch_certs(self, status: str) -> list:
+        return list_all_certs(
+            self.app.db_path,
+            status=None if status == "all" else status,
+        )
 
-        vsb = ttk.Scrollbar(self, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=vsb.set)
-        self.tree.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
-        vsb.place(in_=self.tree, relx=1.0, x=-1, rely=0, relheight=1.0,
-                  anchor="ne")
-
-        for s, color in STATUS_COLORS.items():
-            self.tree.tag_configure(s, foreground=color)
+    def _cert_to_values(self, c: dict) -> tuple:
+        serial_str = c["serial_hex"][:32] + ("…" if len(c["serial_hex"]) > 32 else "")
+        return (
+            c["id"],
+            c.get("owner_username") or f"uid={c['owner_id']}",
+            c["common_name"], serial_str, c["status"],
+            c["not_valid_after"][:19].replace("T", " "),
+            c["renewed_from_id"] or "—",
+        )
 
     def _build_actions(self) -> None:
         bar = ttk.Frame(self)
-        bar.pack(fill=tk.X, pady=(8, 0))
+        bar.pack(fill=tk.X, side=tk.BOTTOM, pady=(8, 0))
         ttk.Button(bar, text="📋 Xem chi tiết",
                    command=self.on_view).pack(side=tk.LEFT)
         ttk.Button(bar, text="🔄 Renew",
@@ -109,36 +107,10 @@ class CertMgmtFrame(ttk.Frame):
                    command=self.on_revoke).pack(side=tk.LEFT, padx=(8, 0))
 
     def refresh(self) -> None:
-        status = self.status_combo.get()
-        items = list_all_certs(
-            self.app.db_path,
-            status=None if status == "all" else status,
-        )
-        for iid in self.tree.get_children():
-            self.tree.delete(iid)
-        for c in items:
-            self.tree.insert(
-                "", tk.END, iid=str(c["id"]),
-                values=(
-                    c["id"],
-                    c.get("owner_username") or f"uid={c['owner_id']}",
-                    c["common_name"],
-                    c["serial_hex"][:32] + ("…" if len(c["serial_hex"]) > 32 else ""),
-                    c["status"],
-                    c["not_valid_after"][:19].replace("T", " "),
-                    c["renewed_from_id"] or "—",
-                ),
-                tags=(c["status"],),
-            )
-        self.count_label.config(text=f"{len(items)} cert")
+        self.table.refresh()
 
     def _selected_id(self) -> "int | None":
-        sel = self.tree.selection()
-        if not sel:
-            messagebox.showwarning("Chưa chọn",
-                                    "Hãy chọn cert trong bảng.")
-            return None
-        return int(sel[0])
+        return self.table.selected_id()
 
     # ── Actions ───────────────────────────────────────────────────────────────
 
@@ -192,14 +164,9 @@ class RevokeCertDialog(tk.Toplevel):
         self.rec = rec
         self.on_done = on_done
 
-        self.title(f"Revoke cert #{rec['id']}")
-        self.geometry("440x300")
-        self.resizable(False, False)
-        self.transient(parent)
-        self.grab_set()
-
-        frame = ttk.Frame(self, padding=16)
-        frame.pack(fill=tk.BOTH, expand=True)
+        frame = init_modal(self, parent=parent,
+                           title=f"Revoke cert #{rec['id']}",
+                           geometry="440x300")
 
         ttk.Label(
             frame,
@@ -219,12 +186,8 @@ class RevokeCertDialog(tk.Toplevel):
             foreground="#888", font=font("caption"),
         ).pack(anchor="w", pady=(6, 0))
 
-        btn_row = ttk.Frame(frame)
-        btn_row.pack(fill=tk.X, pady=(8, 0))
-        ttk.Button(btn_row, text="Revoke",
-                   command=self.on_submit).pack(side=tk.RIGHT, padx=4)
-        ttk.Button(btn_row, text="Hủy",
-                   command=self.destroy).pack(side=tk.RIGHT, padx=4)
+        make_button_row(frame, submit_label="Revoke",
+                        submit_command=self.on_submit)
         self.reason_text.focus_set()
 
     def on_submit(self) -> None:
@@ -262,18 +225,13 @@ class RenewCertDialog(tk.Toplevel):
         self.rec = rec
         self.on_done = on_done
 
-        self.title(f"Renew cert #{rec['id']}")
-        self.geometry("460x280")
-        self.resizable(False, False)
-        self.transient(parent)
-        self.grab_set()
-
         default_validity = get_int_config(
             "default_validity_days", app.db_path, 365,
         )
 
-        frame = ttk.Frame(self, padding=16)
-        frame.pack(fill=tk.BOTH, expand=True)
+        frame = init_modal(self, parent=parent,
+                           title=f"Renew cert #{rec['id']}",
+                           geometry="460x280")
 
         ttk.Label(
             frame,
@@ -303,12 +261,8 @@ class RenewCertDialog(tk.Toplevel):
             justify=tk.LEFT,
         ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(8, 0))
 
-        btn_row = ttk.Frame(frame)
-        btn_row.grid(row=99, column=0, columnspan=2, pady=(16, 0), sticky="e")
-        ttk.Button(btn_row, text="Renew",
-                   command=self.on_submit).pack(side=tk.RIGHT, padx=4)
-        ttk.Button(btn_row, text="Hủy",
-                   command=self.destroy).pack(side=tk.RIGHT, padx=4)
+        make_button_row(frame, submit_label="Renew",
+                        submit_command=self.on_submit)
         self.validity_entry.focus_set()
         self.validity_entry.select_range(0, tk.END)
 
