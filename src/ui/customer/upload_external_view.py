@@ -21,6 +21,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
 from ui.theme import font
+from ui.widgets.modal import fit_to_content
 from services.audit import write_audit, Action
 from services.ca_admin import publish_active_to_trust_store
 from services.external_certs import (
@@ -379,6 +380,7 @@ class VerifyExternalDialog(tk.Toplevel):
             bg="#95a5a6", fg="white", font=font("heading_md"),
         )
         self.banner_label.pack(expand=True, fill=tk.BOTH)
+        fit_to_content(self)
 
     def _log(self, msg: str, tag: str = "info") -> None:
         self.log_text.insert(tk.END, msg + "\n", tag)

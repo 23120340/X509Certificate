@@ -21,6 +21,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 from ui.theme import font
+from ui.widgets.modal import fit_to_content
 from services.audit import write_audit, Action
 from services.ca_admin import (
     create_root_ca, get_active_root_ca, list_root_ca_history, CAError,
@@ -265,6 +266,7 @@ class GenerateRootCADialog(tk.Toplevel):
 
         frame.columnconfigure(1, weight=1)
         self.cn_entry.focus_set()
+        fit_to_content(self)
 
     def on_submit(self) -> None:
         cn = self.cn_entry.get().strip()

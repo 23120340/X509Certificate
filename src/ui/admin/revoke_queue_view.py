@@ -11,6 +11,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 from ui.theme import font
+from ui.widgets.modal import init_modal, make_button_row
 from services.audit import write_audit, Action
 from services.revocation_workflow import (
     list_all_revocations, get_revocation_detail,
@@ -229,14 +230,9 @@ class RejectRevocationDialog(tk.Toplevel):
         self.rec = rec
         self.on_done = on_done
 
-        self.title(f"Reject revocation #{rec['id']}")
-        self.geometry("440x260")
-        self.resizable(False, False)
-        self.transient(parent)
-        self.grab_set()
-
-        frame = ttk.Frame(self, padding=16)
-        frame.pack(fill=tk.BOTH, expand=True)
+        frame = init_modal(self, parent=parent,
+                           title=f"Reject revocation #{rec['id']}",
+                           geometry="440x300")
 
         ttk.Label(
             frame,
@@ -252,12 +248,8 @@ class RejectRevocationDialog(tk.Toplevel):
         self.reason_text = tk.Text(frame, height=5, width=44, wrap=tk.WORD)
         self.reason_text.pack(fill=tk.BOTH, expand=True)
 
-        btn_row = ttk.Frame(frame)
-        btn_row.pack(fill=tk.X, pady=(8, 0))
-        ttk.Button(btn_row, text="Reject",
-                   command=self.on_submit).pack(side=tk.RIGHT, padx=4)
-        ttk.Button(btn_row, text="Hủy",
-                   command=self.destroy).pack(side=tk.RIGHT, padx=4)
+        make_button_row(frame, submit_label="Reject",
+                        submit_command=self.on_submit)
         self.reason_text.focus_set()
 
     def on_submit(self) -> None:

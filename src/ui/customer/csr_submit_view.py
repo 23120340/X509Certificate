@@ -13,6 +13,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 from ui.theme import font
+from ui.widgets.modal import fit_to_content
 from services.customer_keys import list_keys
 from services.csr_workflow import (
     submit_csr, list_my_csr, get_my_csr_by_id, cancel_csr, CSRError,
@@ -286,6 +287,7 @@ class ViewCSRPEMDialog(tk.Toplevel):
         ).pack(side=tk.LEFT)
         ttk.Button(btn_row, text="Đóng",
                    command=self.destroy).pack(side=tk.RIGHT)
+        fit_to_content(self)
 
     def _copy(self, content: str) -> None:
         self.clipboard_clear()

@@ -13,6 +13,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 from ui.theme import font
+from ui.widgets.modal import fit_to_content
 from services.customer_keys import (
     generate_keypair, list_keys, get_key_meta, delete_key, CustomerKeyError,
 )
@@ -179,6 +180,7 @@ class GenerateKeypairDialog(tk.Toplevel):
         frame.columnconfigure(1, weight=1)
         self.name_entry.focus_set()
         self.name_entry.select_range(0, tk.END)
+        fit_to_content(self)
 
     def on_submit(self) -> None:
         name = self.name_entry.get().strip()
@@ -245,6 +247,7 @@ class ViewPublicKeyDialog(tk.Toplevel):
             command=lambda: self._copy(pem_str),
         ).pack(side=tk.LEFT)
         ttk.Button(btn_row, text="Đóng", command=self.destroy).pack(side=tk.RIGHT)
+        fit_to_content(self)
 
     def _copy(self, content: str) -> None:
         self.clipboard_clear()

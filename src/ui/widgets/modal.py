@@ -73,6 +73,23 @@ def init_modal(
     return body
 
 
+def fit_to_content(toplevel: tk.Toplevel) -> None:
+    """Force modal to grow if content + buttons exceed the requested geometry.
+
+    Why: `init_modal` sets a fixed `geometry("WxH")` for predictable size.
+    Khi content thật (label dài, Text widget, warning wrap…) cao hơn H, Tk
+    pack engine sẽ clip widget cuối cùng (thường là button bar ở BOTTOM)
+    → user thấy "Approve/Reject button bị che mất". `wm_minsize` ép Tk
+    grow window lên required size, bất kể `resizable(False, False)`.
+
+    Gọi hàm này SAU khi đã pack/grid hết content + button row.
+    """
+    toplevel.update_idletasks()
+    req_w = toplevel.winfo_reqwidth()
+    req_h = toplevel.winfo_reqheight()
+    toplevel.minsize(req_w, req_h)
+
+
 def make_button_row(
     parent: tk.Misc,
     *,
@@ -116,4 +133,6 @@ def make_button_row(
 
     ttk.Button(bar, text=cancel_label,
                command=cancel_command).pack(side=tk.RIGHT, padx=4)
+
+    fit_to_content(toplevel)
     return bar

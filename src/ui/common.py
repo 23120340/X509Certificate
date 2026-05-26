@@ -13,6 +13,7 @@ from tkinter import ttk, messagebox
 from services.auth import change_password, AuthError
 from services.audit import write_audit, Action
 from ui.theme import COLOR, SPACE, font
+from ui.widgets.modal import fit_to_content
 
 
 class ChangePasswordDialog(tk.Toplevel):
@@ -57,6 +58,7 @@ class ChangePasswordDialog(tk.Toplevel):
         self.old_pw.focus_set()
         for w in (self.old_pw, self.new_pw, self.confirm_pw):
             w.bind("<Return>", lambda e: self.on_submit())
+        fit_to_content(self)
 
     def on_submit(self) -> None:
         old = self.old_pw.get()
@@ -261,6 +263,7 @@ class CertDetailDialog(tk.Toplevel):
         self._build_header()
         self._build_tabs()
         self._build_buttons()
+        fit_to_content(self)
 
     # ── Header (info row) ─────────────────────────────────────────────────────
 

@@ -15,7 +15,7 @@ from tkinter import ttk, messagebox
 
 from ui.theme import font
 from ui.widgets.status_table import StatusFilterTreeFrame
-from ui.widgets.modal import init_modal, make_button_row
+from ui.widgets.modal import init_modal, make_button_row, fit_to_content
 from services.audit import write_audit, Action
 from services.csr_admin import (
     list_all_csr, get_csr_detail, approve_csr, reject_csr, CSRAdminError,
@@ -199,6 +199,7 @@ class ViewCSRDialog(tk.Toplevel):
         ).pack(side=tk.LEFT)
         ttk.Button(btn_row, text="Đóng",
                    command=self.destroy).pack(side=tk.RIGHT)
+        fit_to_content(self)
 
 
 class ApproveCSRDialog(tk.Toplevel):
