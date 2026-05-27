@@ -19,6 +19,7 @@ Bootstrap (`App.__init__`):
   3. seed_admin_if_empty()  — tạo admin mặc định lần đầu (in pw ra console)
 """
 
+import os
 import tkinter as tk
 from tkinter import ttk
 
@@ -34,7 +35,7 @@ DEFAULT_ADMIN_USERNAME = "admin"
 DEFAULT_ADMIN_PASSWORD = "Admin@123"
 
 WINDOW_TITLE = "X.509 CA Management"
-LOGIN_SIZE      = "520x420"
+LOGIN_SIZE      = "680x620"
 DASHBOARD_SIZE  = "1024x700"
 
 
@@ -61,6 +62,16 @@ class App:
         # mở Verification Lab nữa. Lab server riêng ở 9889/9888 (start manual).
         self.infra = get_infra()
         self.infra.start_prod_servers()
+        self.csr_api = None
+        self.csr_api_url: str | None = None
+        self.remote_csr_api_url = os.environ.get("X509_REMOTE_CSR_API_URL", "").strip()
+        self.remote_csr_api_token = os.environ.get("X509_CSR_API_TOKEN", "").strip()
+        if os.environ.get("X509_CSR_API_ENABLED", "").lower() in ("1", "true", "yes"):
+            self.start_csr_api(
+                host=os.environ.get("X509_CSR_API_HOST", "0.0.0.0"),
+                port=int(os.environ.get("X509_CSR_API_PORT", "8787")),
+                token=os.environ.get("X509_CSR_API_TOKEN", ""),
+            )
 
         self.root = tk.Tk()
         self.root.title(WINDOW_TITLE)
@@ -73,12 +84,45 @@ class App:
         self.content: "ttk.Frame | None" = None
         self.show_login()
 
+    def start_csr_api(self, host: str = "0.0.0.0", port: int = 8787,
+                      token: str = "") -> str:
+        """Start/restart the LAN CSR API used by the Admin machine."""
+        from infra.csr_api_server import start_csr_api_server
+        if self.csr_api is not None:
+            try:
+                self.csr_api.shutdown()
+                self.csr_api.server_close()
+            except Exception:
+                pass
+            self.csr_api = None
+        self.csr_api = start_csr_api_server(
+            db_path=self.db_path,
+            host=host,
+            port=port,
+            token=token,
+            log_callback=print,
+        )
+        display_host = "localhost" if host in ("0.0.0.0", "") else host
+        self.csr_api_url = f"http://{display_host}:{port}"
+        return self.csr_api_url
+
+    def set_remote_csr_api(self, url: str, token: str = "") -> None:
+        """Configure this app instance as a LAN client for remote CSR submit."""
+        self.remote_csr_api_url = (url or "").strip().rstrip("/")
+        self.remote_csr_api_token = token or ""
+
     def _on_close(self) -> None:
         """Cleanup khi user đóng cửa sổ — shutdown servers + destroy Tk."""
         try:
             self.infra.stop_all()
         except Exception:
             pass
+        if self.csr_api is not None:
+            try:
+                self.csr_api.shutdown()
+                self.csr_api.server_close()
+            except Exception:
+                pass
         self.root.destroy()
 
     # ── Bootstrap ────────────────────────────────────────────────────────────

@@ -12,6 +12,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 from ui.theme import font
+from ui.widgets.modal import init_modal, make_button_row
 from services.audit import write_audit, Action
 from services.cert_lifecycle import list_certs_for_owner
 from services.revocation_workflow import (
@@ -56,6 +57,7 @@ class RevokeRequestFrame(ttk.Frame):
             font=font("heading_md"),
         ).pack(anchor="w", pady=(0, 4))
         self._build_table()
+        self._build_actions()
 
         self.refresh_certs()
         self.refresh_requests()
@@ -162,22 +164,100 @@ class RevokeRequestFrame(ttk.Frame):
         self.tree.pack(fill=tk.BOTH, expand=True)
         for s, color in STATUS_COLORS.items():
             self.tree.tag_configure(s, foreground=color)
+        self.tree.bind("<Double-1>", lambda _e: self.on_view_detail())
+
+    def _build_actions(self) -> None:
+        bar = ttk.Frame(self)
+        bar.pack(fill=tk.X, pady=(8, 0))
+        ttk.Button(
+            bar, text="Xem chi tiết",
+            command=self.on_view_detail,
+        ).pack(side=tk.LEFT)
 
     def refresh_requests(self) -> None:
+        self._requests_by_id = {}
         for iid in self.tree.get_children():
             self.tree.delete(iid)
         for r in list_my_revocation_requests(
             self.app.session["id"], self.app.db_path,
         ):
+            self._requests_by_id[int(r["id"])] = r
+            reason = r["reason"] or ""
+            reason_preview = reason[:60] + ("..." if len(reason) > 60 else "")
             self.tree.insert(
                 "", tk.END, iid=str(r["id"]),
                 values=(
                     r["id"], r["issued_cert_id"],
                     r.get("common_name") or "—",
-                    (r["reason"] or "")[:60],
+                    reason_preview,
                     r["status"],
                     r["submitted_at"][:19].replace("T", " "),
                     (r["reviewed_at"] or "—")[:19].replace("T", " ") if r["reviewed_at"] else "—",
                 ),
                 tags=(r["status"],),
             )
+
+    def _selected_request(self) -> "dict | None":
+        sel = self.tree.selection()
+        if not sel:
+            messagebox.showwarning(
+                "Chưa chọn",
+                "Hãy chọn một yêu cầu thu hồi trong bảng.",
+            )
+            return None
+        return self._requests_by_id.get(int(sel[0]))
+
+    def on_view_detail(self) -> None:
+        rec = self._selected_request()
+        if rec is None:
+            return
+        RevocationRequestDetailDialog(self, rec)
+
+
+class RevocationRequestDetailDialog(tk.Toplevel):
+    """Dialog cho customer xem đầy đủ reason / reject reason của request."""
+
+    def __init__(self, parent: tk.Misc, rec: dict):
+        super().__init__(parent)
+        self.rec = rec
+        frame = init_modal(
+            self,
+            parent=parent,
+            title=f"Chi tiết yêu cầu thu hồi #{rec['id']}",
+            geometry="680x520",
+            resizable=True,
+        )
+        self._build_content(frame)
+        make_button_row(frame, cancel_label="Đóng")
+
+    def _build_content(self, frame: ttk.Frame) -> None:
+        rec = self.rec
+        info = (
+            f"Request ID:    #{rec['id']}\n"
+            f"Cert ID:       #{rec['issued_cert_id']}\n"
+            f"Domain:        {rec.get('common_name') or '—'}\n"
+            f"Serial:        {rec.get('serial_hex') or '—'}\n"
+            f"Status:        {rec['status']}\n"
+            f"Gửi lúc:       {rec['submitted_at']}\n"
+            f"Duyệt lúc:     {rec.get('reviewed_at') or '—'}\n"
+            f"Reviewed by:   {rec.get('reviewed_by') or '—'}\n"
+        )
+        ttk.Label(frame, text=info, justify=tk.LEFT, font=font("mono")).pack(
+            anchor="w", fill=tk.X, pady=(0, 10),
+        )
+
+        ttk.Label(
+            frame,
+            text="Reason / Reject reason đầy đủ:",
+            font=font("heading_md"),
+        ).pack(anchor="w", pady=(0, 4))
+
+        body = ttk.Frame(frame)
+        body.pack(fill=tk.BOTH, expand=True)
+        text = tk.Text(body, wrap=tk.WORD, height=12, font=font("mono"))
+        yscroll = ttk.Scrollbar(body, orient=tk.VERTICAL, command=text.yview)
+        text.configure(yscrollcommand=yscroll.set)
+        text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        yscroll.pack(side=tk.RIGHT, fill=tk.Y)
+        text.insert("1.0", rec.get("reason") or "—")
+        text.config(state=tk.DISABLED)

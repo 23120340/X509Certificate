@@ -14,11 +14,15 @@ from tkinter import ttk, messagebox
 
 from ui.theme import font
 from ui.widgets.modal import fit_to_content
-from services.customer_keys import list_keys
+from core.csr import build_csr, csr_to_pem
+from services.customer_keys import list_keys, load_private_key, CustomerKeyError
 from services.csr_workflow import (
     submit_csr, list_my_csr, get_my_csr_by_id, cancel_csr, CSRError,
 )
 from services.audit import write_audit, Action
+from services.remote_csr_client import (
+    check_admin_api_health, submit_csr_to_admin_api, RemoteCSRClientError,
+)
 
 
 STATUS_COLORS = {
@@ -33,6 +37,8 @@ class CSRSubmitFrame(ttk.Frame):
     def __init__(self, parent: tk.Misc, app):
         super().__init__(parent, padding=24)
         self.app = app
+        self.remote_api_url = getattr(app, "remote_csr_api_url", "")
+        self.remote_api_token = getattr(app, "remote_csr_api_token", "")
 
         ttk.Label(
             self, text="Yêu cầu cấp Chứng nhận X.509",
@@ -100,9 +106,34 @@ class CSRSubmitFrame(ttk.Frame):
             foreground="#888", font=font("caption"),
         ).grid(row=3, column=1, columnspan=3, sticky="w", padx=4)
 
+        submit_row = 6 if self.remote_api_url else 4
         ttk.Button(form, text="Submit CSR", command=self.on_submit).grid(
-            row=4, column=1, pady=(10, 4), sticky="w", padx=4,
+            row=submit_row, column=1, pady=(10, 4), sticky="w", padx=4,
         )
+        if self.remote_api_url:
+            ttk.Label(form, text="Admin API:").grid(
+                row=4, column=0, sticky="e", pady=4, padx=4
+            )
+            self.remote_url_entry = ttk.Entry(form, width=42)
+            self.remote_url_entry.grid(
+                row=4, column=1, columnspan=3, pady=4, padx=4, sticky="ew"
+            )
+            self.remote_url_entry.insert(0, self.remote_api_url)
+            ttk.Button(
+                form, text="Test API", command=self.on_test_remote_api,
+            ).grid(row=4, column=4, pady=4, padx=(4, 0))
+            ttk.Label(form, text="Mật khẩu customer trên Admin:").grid(
+                row=5, column=0, sticky="e", pady=4, padx=4
+            )
+            self.remote_password_entry = ttk.Entry(form, width=42, show="*")
+            self.remote_password_entry.grid(
+                row=5, column=1, columnspan=3, pady=4, padx=4, sticky="ew"
+            )
+            ttk.Label(
+                form,
+                text="Remote mode: CSR sẽ gửi qua LAN tới máy Admin; private key vẫn ở máy này.",
+                foreground="#666", font=font("caption"),
+            ).grid(row=6, column=2, columnspan=2, sticky="w", padx=4)
         form.columnconfigure(1, weight=1)
 
     def refresh_keys(self) -> None:
@@ -124,6 +155,26 @@ class CSRSubmitFrame(ttk.Frame):
             return None
         return self._keys[idx]["id"]
 
+    def _selected_key_meta(self) -> "dict | None":
+        idx = self.key_combo.current()
+        if idx < 0 or idx >= len(self._keys):
+            return None
+        return self._keys[idx]
+
+    def on_test_remote_api(self) -> None:
+        if not self.remote_api_url:
+            return
+        api_url = self.remote_url_entry.get().strip()
+        try:
+            data = check_admin_api_health(api_url=api_url)
+        except RemoteCSRClientError as e:
+            messagebox.showerror("Không kết nối được Admin API", str(e))
+            return
+        messagebox.showinfo(
+            "Admin API OK",
+            f"Kết nối thành công tới {api_url}\nService: {data.get('service', 'csr-api')}",
+        )
+
     def on_submit(self) -> None:
         key_id = self._selected_key_id()
         if key_id is None:
@@ -135,6 +186,10 @@ class CSRSubmitFrame(ttk.Frame):
         cn = self.cn_entry.get().strip()
         san_raw = self.san_entry.get().strip()
         san_list = [s.strip() for s in san_raw.split(",")] if san_raw else []
+
+        if self.remote_api_url:
+            self._submit_remote(key_id, cn, san_list)
+            return
 
         try:
             csr = submit_csr(
@@ -162,6 +217,42 @@ class CSRSubmitFrame(ttk.Frame):
             f"CSR #{csr['id']} cho '{cn}' đã gửi lên Admin để duyệt.",
         )
         self.refresh_csr_table()
+
+    def _submit_remote(self, key_id: int, cn: str, san_list: list[str]) -> None:
+        key_meta = self._selected_key_meta()
+        api_url = self.remote_url_entry.get().strip()
+        password = self.remote_password_entry.get()
+        if not password:
+            messagebox.showerror(
+                "Thiếu mật khẩu",
+                "Nhập mật khẩu customer trên máy Admin để gửi CSR qua LAN.",
+            )
+            return
+        try:
+            private_key = load_private_key(
+                key_id, self.app.session["id"], self.app.db_path,
+            )
+            csr_obj = build_csr(private_key, common_name=cn, san_list=san_list)
+            csr_pem = csr_to_pem(csr_obj)
+            rec = submit_csr_to_admin_api(
+                api_url=api_url,
+                username=self.app.session["username"],
+                password=password,
+                key_name=(key_meta or {}).get("name", f"key-{key_id}"),
+                csr_pem=csr_pem,
+                token=self.remote_api_token,
+            )
+        except (CustomerKeyError, ValueError, RemoteCSRClientError) as e:
+            messagebox.showerror("Submit CSR qua LAN thất bại", str(e))
+            return
+
+        messagebox.showinfo(
+            "Đã gửi CSR qua LAN",
+            (
+                f"CSR #{rec['id']} cho '{rec['common_name']}' đã gửi tới máy Admin.\n"
+                "Admin refresh mục Duyệt CSR để approve/reject."
+            ),
+        )
 
     # ── Table CSR của tôi ─────────────────────────────────────────────────────
 

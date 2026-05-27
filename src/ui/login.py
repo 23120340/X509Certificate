@@ -12,6 +12,7 @@ from tkinter import ttk, messagebox
 
 from services.auth import login, register_user, AuthError
 from services.audit import write_audit, Action
+from services.remote_csr_client import check_admin_api_health, RemoteCSRClientError
 from ui.theme import COLOR, SPACE, font
 
 
@@ -24,6 +25,7 @@ class LoginFrame(ttk.Frame):
 
         self._build_header()
         self._build_notebook()
+        self._build_lan_panel()
 
     # ── Header ────────────────────────────────────────────────────────────────
 
@@ -47,6 +49,120 @@ class LoginFrame(ttk.Frame):
 
         nb.add(self._build_login_tab(nb),    text="Đăng nhập")
         nb.add(self._build_register_tab(nb), text="Đăng ký (Customer)")
+
+    def _build_lan_panel(self) -> None:
+        box = ttk.LabelFrame(self, text="LAN demo mode", padding=12)
+        box.pack(fill=tk.X, pady=(SPACE["md"], 0))
+
+        self.lan_mode = tk.StringVar(value="offline")
+        mode_row = ttk.Frame(box)
+        mode_row.grid(row=0, column=0, columnspan=5, sticky="w")
+        ttk.Radiobutton(mode_row, text="Offline", value="offline",
+                        variable=self.lan_mode,
+                        command=self._update_lan_mode).pack(side=tk.LEFT, padx=(0, 12))
+        ttk.Radiobutton(mode_row, text="Máy Admin nhận CSR", value="admin",
+                        variable=self.lan_mode,
+                        command=self._update_lan_mode).pack(side=tk.LEFT, padx=(0, 12))
+        ttk.Radiobutton(mode_row, text="Máy Client gửi CSR", value="client",
+                        variable=self.lan_mode,
+                        command=self._update_lan_mode).pack(side=tk.LEFT)
+
+        ttk.Label(box, text="Admin bind:").grid(row=1, column=0, sticky="e", pady=6, padx=4)
+        self.admin_host_entry = ttk.Entry(box, width=16)
+        self.admin_host_entry.grid(row=1, column=1, sticky="ew", pady=6, padx=4)
+        self.admin_host_entry.insert(0, "0.0.0.0")
+        ttk.Label(box, text="Port:").grid(row=1, column=2, sticky="e", pady=6, padx=4)
+        self.admin_port_entry = ttk.Entry(box, width=8)
+        self.admin_port_entry.grid(row=1, column=3, sticky="w", pady=6, padx=4)
+        self.admin_port_entry.insert(0, "8787")
+        self.admin_start_btn = ttk.Button(box, text="Bật CSR API",
+                                          command=self.on_start_admin_api)
+        self.admin_start_btn.grid(row=1, column=4, sticky="ew", pady=6, padx=4)
+
+        ttk.Label(box, text="Admin API URL:").grid(row=2, column=0, sticky="e", pady=6, padx=4)
+        self.client_url_entry = ttk.Entry(box, width=42)
+        self.client_url_entry.grid(row=2, column=1, columnspan=3, sticky="ew", pady=6, padx=4)
+        self.client_url_entry.insert(
+            0, getattr(self.app, "remote_csr_api_url", "") or "http://10.0.17.102:8787"
+        )
+        self.client_apply_btn = ttk.Button(box, text="Dùng URL này",
+                                           command=self.on_apply_client_api)
+        self.client_apply_btn.grid(row=2, column=4, sticky="ew", pady=6, padx=4)
+
+        ttk.Label(box, text="Token:").grid(row=3, column=0, sticky="e", pady=6, padx=4)
+        self.lan_token_entry = ttk.Entry(box, width=42, show="*")
+        self.lan_token_entry.grid(row=3, column=1, columnspan=3, sticky="ew", pady=6, padx=4)
+        self.lan_token_entry.insert(0, getattr(self.app, "remote_csr_api_token", ""))
+        self.client_test_btn = ttk.Button(box, text="Test API",
+                                          command=self.on_test_client_api)
+        self.client_test_btn.grid(row=3, column=4, sticky="ew", pady=6, padx=4)
+
+        self.lan_status = ttk.Label(
+            box, text="Offline: dùng database cục bộ trên máy này.",
+            style="Subtle.TLabel",
+        )
+        self.lan_status.grid(row=4, column=0, columnspan=5, sticky="w", pady=(4, 0))
+        box.columnconfigure(1, weight=1)
+        self._update_lan_mode()
+
+    def _update_lan_mode(self) -> None:
+        mode = self.lan_mode.get()
+        admin_state = tk.NORMAL if mode == "admin" else tk.DISABLED
+        client_state = tk.NORMAL if mode == "client" else tk.DISABLED
+        for widget in (self.admin_host_entry, self.admin_port_entry, self.admin_start_btn):
+            widget.configure(state=admin_state)
+        for widget in (self.client_url_entry, self.client_apply_btn, self.client_test_btn):
+            widget.configure(state=client_state)
+        self.lan_token_entry.configure(
+            state=tk.NORMAL if mode in ("admin", "client") else tk.DISABLED
+        )
+        if mode == "offline":
+            self.app.set_remote_csr_api("", "")
+            self.lan_status.configure(text="Offline: dùng database cục bộ trên máy này.")
+        elif mode == "admin":
+            self.lan_status.configure(text="Admin mode: bật API rồi đăng nhập admin để duyệt CSR.")
+        else:
+            self.lan_status.configure(text="Client mode: nhập URL máy Admin, Test API, rồi đăng nhập customer.")
+
+    def on_start_admin_api(self) -> None:
+        try:
+            port = int(self.admin_port_entry.get().strip())
+            if not (1024 <= port <= 65535):
+                raise ValueError
+        except ValueError:
+            messagebox.showerror("Port không hợp lệ", "Port phải từ 1024 đến 65535.")
+            return
+        host = self.admin_host_entry.get().strip() or "0.0.0.0"
+        try:
+            self.app.start_csr_api(host=host, port=port,
+                                   token=self.lan_token_entry.get())
+        except OSError as e:
+            messagebox.showerror("Không bật được CSR API", str(e))
+            return
+        self.lan_status.configure(
+            text=f"CSR API đã bật tại {host}:{port}. Client dùng http://<IP máy này>:{port}."
+        )
+        messagebox.showinfo("CSR API đã bật", f"Server đang nghe tại {host}:{port}")
+
+    def on_apply_client_api(self) -> None:
+        url = self.client_url_entry.get().strip().rstrip("/")
+        if not url:
+            messagebox.showerror("Thiếu URL", "Nhập Admin API URL, ví dụ http://10.0.17.102:8787")
+            return
+        self.app.set_remote_csr_api(url, self.lan_token_entry.get())
+        self.lan_status.configure(text=f"Client mode đang dùng Admin API: {url}")
+        messagebox.showinfo("Đã bật Client LAN", "Sau khi đăng nhập customer, Submit CSR sẽ gửi tới Admin API.")
+
+    def on_test_client_api(self) -> None:
+        url = self.client_url_entry.get().strip().rstrip("/")
+        try:
+            data = check_admin_api_health(api_url=url)
+        except RemoteCSRClientError as e:
+            messagebox.showerror("Không kết nối được Admin API", str(e))
+            return
+        self.app.set_remote_csr_api(url, self.lan_token_entry.get())
+        self.lan_status.configure(text=f"Admin API OK: {url}")
+        messagebox.showinfo("Admin API OK", f"Kết nối thành công tới {url}\nService: {data.get('service', 'csr-api')}")
 
     # ── Login tab ─────────────────────────────────────────────────────────────
 

@@ -447,14 +447,120 @@ python scripts/backup_db.py --no-master-key  # omit master.key cho an toàn khi 
 
 ## Quy trình thao tác trên GUI
 
-1. Bấm **Start CRL Server** để mở HTTP CRL server ở cổng `8889`.
-2. Bấm **Start OCSP Server** để mở OCSP responder ở cổng `8888`.
+1. Bấm **Start CRL Server** để mở HTTP CRL server Lab ở cổng `9889`.
+2. Bấm **Start OCSP Server** để mở OCSP responder Lab ở cổng `9888`.
 3. Trong khung **Thêm Server mới**, nhập tên, port và chọn loại chứng chỉ.
 4. Bấm **Thêm Server** để sinh cert (Root CA ký) và mở socket server tương ứng.
 5. Chọn server trong bảng, bấm **Verify** để client nhận cert và chạy 5 bước xác thực.
 6. Xem kết quả PASS/FAIL ở banner dưới cùng và log chi tiết bên phải.
 
 Nút **Publish CRL Now** tạo lại `crl.pem` từ snapshot hiện tại của `ocsp_db.json`. Đây là điểm quan trọng để demo độ trễ của CRL so với OCSP.
+
+## Chạy mô hình Admin/Client qua LAN
+
+Verification Lab chỉ dùng để minh họa logic verify 5 bước. Demo client-server chính của đồ án dùng luồng CSR thật:
+
+```text
+Máy 1 - Admin/CA
+  Chạy CA app + CSR API server
+  Nhận CSR từ máy client
+  Admin mở CSR Queue để approve/reject
+
+Máy 2 - Client/Customer
+  Sinh private key + CSR cục bộ
+  Gửi CSR qua LAN tới máy Admin
+  Private key không rời khỏi máy client
+```
+
+Ví dụ máy Admin có IP LAN `192.168.1.10`.
+
+Trên máy 1 (Admin/CA), mở app bình thường:
+
+```powershell
+cd D:\repos\X509Certificate
+python main.py
+```
+
+Trong app Admin:
+
+1. Ở màn hình đăng nhập, chọn **Máy Admin nhận CSR**.
+2. Giữ `Admin bind = 0.0.0.0`, `Port = 8787`, rồi bấm **Bật CSR API**.
+3. Đăng nhập admin.
+4. Tạo Root CA nếu chưa có.
+5. Mở mục **Duyệt CSR** và để màn hình này chờ request.
+
+Mở firewall trên máy Admin:
+
+```powershell
+New-NetFirewallRule -DisplayName "X509 CSR API 8787" -Direction Inbound -Protocol TCP -LocalPort 8787 -Action Allow
+```
+
+Trên máy 2 (Client/Customer), mở app bình thường:
+
+```powershell
+cd D:\repos\X509Certificate
+python main.py
+```
+
+Trong app Customer:
+
+1. Ở màn hình đăng nhập, chọn **Máy Client gửi CSR**.
+2. Nhập `Admin API URL`, ví dụ `http://192.168.1.10:8787`.
+3. Bấm **Test API**; nếu thành công, app tự dùng URL đó.
+4. Đăng ký/đăng nhập customer trên máy client.
+5. Vào **Keypair của tôi** để sinh keypair.
+6. Vào **Yêu cầu cấp cert**.
+7. Chọn keypair, nhập domain/SAN.
+8. Nhập mật khẩu customer trên máy Admin vào ô remote password.
+9. Bấm **Submit CSR**.
+
+Khi bật `X509_REMOTE_CSR_API_URL`, CSR được gửi qua LAN tới máy Admin; private key vẫn nằm trên máy client. Máy Admin refresh **Duyệt CSR** sẽ thấy request pending.
+
+Cũng có thể dùng script để test nhanh không qua GUI:
+
+```powershell
+cd D:\repos\X509Certificate
+python scripts\submit_csr_lan.py `
+  --server http://192.168.1.10:8787 `
+  --username alice `
+  --password AlicePw123 `
+  --domain myshop.com `
+  --san myshop.com,www.myshop.com `
+  --key-name alice-lan-key
+```
+
+Script sẽ:
+
+- Sinh RSA private key trên máy client.
+- Tạo CSR PKCS#10 và ký bằng private key đó.
+- Lưu private key + CSR vào `client_artifacts/` trên máy client.
+- Gửi CSR tới máy Admin qua `POST /api/csr/submit`.
+
+Sau khi máy client gửi xong, máy Admin bấm **Refresh** trong **Duyệt CSR** sẽ thấy CSR mới ở trạng thái `pending`. Admin chọn CSR đó rồi bấm **Approve** để phát hành certificate.
+
+Kiểm tra kết nối trước khi demo:
+
+```powershell
+Test-NetConnection 192.168.1.10 -Port 8787
+Invoke-WebRequest http://192.168.1.10:8787/health
+```
+
+Nếu muốn thêm token đơn giản cho API, đặt cùng một giá trị ở máy Admin và khi chạy script:
+
+```powershell
+# Máy Admin
+$env:X509_CSR_API_TOKEN="demo-secret"
+
+# Máy Client
+python scripts\submit_csr_lan.py --server http://192.168.1.10:8787 --token demo-secret --username alice --password AlicePw123 --domain myshop.com
+```
+
+Checklist nhanh nếu LAN không chạy:
+
+- Hai máy phải cùng LAN và máy client truy cập được `192.168.1.10:8787`.
+- Nếu `Test-NetConnection` fail, kiểm tra firewall hoặc Wi-Fi client isolation.
+- Nếu Admin không thấy CSR, kiểm tra app Admin có bật `X509_CSR_API_ENABLED=1` trước khi chạy `python main.py`.
+- Nếu approve fail, đảm bảo máy Admin đã tạo Root CA active.
 
 ## Các loại server demo
 
