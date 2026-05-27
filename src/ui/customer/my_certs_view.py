@@ -14,6 +14,11 @@ from tkinter import ttk, messagebox
 from ui.theme import font
 from ui.widgets.status_table import StatusFilterTreeFrame
 from services.cert_lifecycle import list_certs_for_owner, get_cert_detail
+from services.remote_csr_client import (
+    list_customer_certs_from_admin_api,
+    get_customer_cert_detail_from_admin_api,
+    RemoteCSRClientError,
+)
 from ui.common import CertDetailDialog
 
 
@@ -29,6 +34,8 @@ class MyCertsFrame(ttk.Frame):
     def __init__(self, parent: tk.Misc, app):
         super().__init__(parent, padding=24)
         self.app = app
+        self.remote_api_url = getattr(app, "remote_csr_api_url", "")
+        self.remote_api_token = getattr(app, "remote_csr_api_token", "")
 
         ttk.Label(
             self, text="Chứng nhận của tôi",
@@ -71,6 +78,21 @@ class MyCertsFrame(ttk.Frame):
         self.table.bind_double_click(self.on_view)
 
     def _fetch_my_certs(self, status: str) -> list:
+        if self.remote_api_url:
+            password = getattr(self.app, "remote_csr_password", "")
+            if not password:
+                return []
+            try:
+                return list_customer_certs_from_admin_api(
+                    api_url=self.remote_api_url,
+                    username=self.app.session["username"],
+                    password=password,
+                    status=None if status == "all" else status,
+                    token=self.remote_api_token,
+                )
+            except RemoteCSRClientError as e:
+                messagebox.showerror("Không tải được cert từ Admin", str(e))
+                return []
         return list_certs_for_owner(
             self.app.session["id"], self.app.db_path,
             status=None if status == "all" else status,
@@ -102,8 +124,7 @@ class MyCertsFrame(ttk.Frame):
         cert_id = self._selected_id()
         if cert_id is None:
             return
-        rec = get_cert_detail(cert_id, self.app.db_path,
-                              owner_id=self.app.session["id"])
+        rec = self._get_cert_detail(cert_id)
         if rec is None:
             messagebox.showerror("Lỗi", "Không tìm thấy cert.")
             return
@@ -114,8 +135,7 @@ class MyCertsFrame(ttk.Frame):
         cert_id = self._selected_id()
         if cert_id is None:
             return
-        rec = get_cert_detail(cert_id, self.app.db_path,
-                              owner_id=self.app.session["id"])
+        rec = self._get_cert_detail(cert_id)
         if rec is None:
             return
         default_name = (
@@ -131,5 +151,32 @@ class MyCertsFrame(ttk.Frame):
         if not path:
             return
         with open(path, "wb") as f:
-            f.write(bytes(rec["cert_pem"]))
+            pem = rec["cert_pem"]
+            f.write(pem.encode("ascii") if isinstance(pem, str) else bytes(pem))
         messagebox.showinfo("Đã lưu", f"Đã lưu cert vào:\n{path}")
+
+    def _get_cert_detail(self, cert_id: int) -> "dict | None":
+        if not self.remote_api_url:
+            return get_cert_detail(cert_id, self.app.db_path,
+                                   owner_id=self.app.session["id"])
+        password = getattr(self.app, "remote_csr_password", "")
+        if not password:
+            messagebox.showerror(
+                "Thiếu mật khẩu",
+                "Vào mục Yêu cầu cấp cert, nhập mật khẩu customer trên Admin rồi Refresh.",
+            )
+            return None
+        try:
+            rec = get_customer_cert_detail_from_admin_api(
+                api_url=self.remote_api_url,
+                username=self.app.session["username"],
+                password=password,
+                cert_id=cert_id,
+                token=self.remote_api_token,
+            )
+        except RemoteCSRClientError as e:
+            messagebox.showerror("Không tải được cert từ Admin", str(e))
+            return None
+        if isinstance(rec.get("cert_pem"), str):
+            rec["cert_pem"] = rec["cert_pem"].encode("ascii")
+        return rec

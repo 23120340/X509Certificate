@@ -51,10 +51,22 @@ class LoginFrame(ttk.Frame):
         nb.add(self._build_register_tab(nb), text="Đăng ký (Customer)")
 
     def _build_lan_panel(self) -> None:
-        box = ttk.LabelFrame(self, text="LAN demo mode", padding=12)
-        box.pack(fill=tk.X, pady=(SPACE["md"], 0))
+        outer = ttk.Frame(self)
+        outer.pack(fill=tk.X, pady=(SPACE["md"], 0))
 
-        self.lan_mode = tk.StringVar(value="offline")
+        self.advanced_mode = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            outer,
+            text="Advanced mode",
+            variable=self.advanced_mode,
+            command=self._toggle_advanced_mode,
+        ).pack(anchor="w")
+
+        box = ttk.LabelFrame(outer, text="LAN CSR mode", padding=12)
+        self.lan_options = box
+
+        initial_mode = "client" if getattr(self.app, "remote_csr_api_url", "") else "offline"
+        self.lan_mode = tk.StringVar(value=initial_mode)
         mode_row = ttk.Frame(box)
         mode_row.grid(row=0, column=0, columnspan=5, sticky="w")
         ttk.Radiobutton(mode_row, text="Offline", value="offline",
@@ -104,6 +116,12 @@ class LoginFrame(ttk.Frame):
         self.lan_status.grid(row=4, column=0, columnspan=5, sticky="w", pady=(4, 0))
         box.columnconfigure(1, weight=1)
         self._update_lan_mode()
+
+    def _toggle_advanced_mode(self) -> None:
+        if self.advanced_mode.get():
+            self.lan_options.pack(fill=tk.X, pady=(SPACE["xs"], 0))
+        else:
+            self.lan_options.pack_forget()
 
     def _update_lan_mode(self) -> None:
         mode = self.lan_mode.get()

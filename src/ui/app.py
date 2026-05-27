@@ -66,6 +66,7 @@ class App:
         self.csr_api_url: str | None = None
         self.remote_csr_api_url = os.environ.get("X509_REMOTE_CSR_API_URL", "").strip()
         self.remote_csr_api_token = os.environ.get("X509_CSR_API_TOKEN", "").strip()
+        self.remote_csr_password = ""
         if os.environ.get("X509_CSR_API_ENABLED", "").lower() in ("1", "true", "yes"):
             self.start_csr_api(
                 host=os.environ.get("X509_CSR_API_HOST", "0.0.0.0"),

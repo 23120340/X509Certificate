@@ -19,6 +19,8 @@ from core.csr import parse_csr, verify_csr_signature
 from db.connection import conn_scope, transaction
 from services.audit import write_audit, Action
 from services.auth import login, register_user, AuthError
+from services.cert_lifecycle import list_certs_for_owner, get_cert_detail
+from services.csr_workflow import list_my_csr, get_my_csr_by_id
 
 
 class RemoteCSRError(Exception):
@@ -76,6 +78,18 @@ def _login_or_register_customer(username: str, password: str, db_path: str) -> d
 
     if user["role"] != "customer":
         raise RemoteCSRError("remote CSR submitter must be a customer account")
+    return user
+
+
+def _login_customer(username: str, password: str, db_path: str) -> dict:
+    username = _clean_username(username)
+    password = _clean_password(password)
+    try:
+        user = login(username, password, db_path)
+    except AuthError as e:
+        raise RemoteCSRError(str(e)) from e
+    if user["role"] != "customer":
+        raise RemoteCSRError("remote customer endpoint requires a customer account")
     return user
 
 
@@ -175,3 +189,53 @@ def submit_remote_csr(
         "status": "pending",
         "submitted_at": now,
     }
+
+
+def list_remote_csrs(
+    *,
+    username: str,
+    password: str,
+    db_path: str,
+    status: "str | None" = None,
+) -> list[dict]:
+    user = _login_customer(username, password, db_path)
+    return list_my_csr(user["id"], db_path, status=status)
+
+
+def get_remote_csr_detail(
+    *,
+    username: str,
+    password: str,
+    csr_id: int,
+    db_path: str,
+) -> "dict | None":
+    user = _login_customer(username, password, db_path)
+    rec = get_my_csr_by_id(csr_id, user["id"], db_path)
+    if rec is not None and isinstance(rec.get("csr_pem"), (bytes, bytearray)):
+        rec["csr_pem"] = bytes(rec["csr_pem"]).decode("ascii", errors="replace")
+    return rec
+
+
+def list_remote_certs(
+    *,
+    username: str,
+    password: str,
+    db_path: str,
+    status: "str | None" = None,
+) -> list[dict]:
+    user = _login_customer(username, password, db_path)
+    return list_certs_for_owner(user["id"], db_path, status=status)
+
+
+def get_remote_cert_detail(
+    *,
+    username: str,
+    password: str,
+    cert_id: int,
+    db_path: str,
+) -> "dict | None":
+    user = _login_customer(username, password, db_path)
+    rec = get_cert_detail(cert_id, db_path, owner_id=user["id"])
+    if rec is not None and isinstance(rec.get("cert_pem"), (bytes, bytearray)):
+        rec["cert_pem"] = bytes(rec["cert_pem"]).decode("ascii", errors="replace")
+    return rec

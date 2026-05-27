@@ -21,7 +21,11 @@ from services.csr_workflow import (
 )
 from services.audit import write_audit, Action
 from services.remote_csr_client import (
-    check_admin_api_health, submit_csr_to_admin_api, RemoteCSRClientError,
+    check_admin_api_health,
+    submit_csr_to_admin_api,
+    list_customer_csrs_from_admin_api,
+    get_customer_csr_detail_from_admin_api,
+    RemoteCSRClientError,
 )
 
 
@@ -62,8 +66,8 @@ class CSRSubmitFrame(ttk.Frame):
             self, text="Các CSR của tôi",
             font=font("heading_md"),
         ).pack(anchor="w", pady=(0, 4))
-        self._build_table()
         self._build_table_actions()
+        self._build_table()
 
         self.refresh_keys()
         self.refresh_csr_table()
@@ -129,6 +133,8 @@ class CSRSubmitFrame(ttk.Frame):
             self.remote_password_entry.grid(
                 row=5, column=1, columnspan=3, pady=4, padx=4, sticky="ew"
             )
+            if getattr(self.app, "remote_csr_password", ""):
+                self.remote_password_entry.insert(0, self.app.remote_csr_password)
             ttk.Label(
                 form,
                 text="Remote mode: CSR sẽ gửi qua LAN tới máy Admin; private key vẫn ở máy này.",
@@ -242,6 +248,9 @@ class CSRSubmitFrame(ttk.Frame):
                 csr_pem=csr_pem,
                 token=self.remote_api_token,
             )
+            self.app.set_remote_csr_api(api_url, self.remote_api_token)
+            self.app.remote_csr_password = password
+            self.refresh_csr_table()
         except (CustomerKeyError, ValueError, RemoteCSRClientError) as e:
             messagebox.showerror("Submit CSR qua LAN thất bại", str(e))
             return
@@ -255,7 +264,6 @@ class CSRSubmitFrame(ttk.Frame):
         )
 
     # ── Table CSR của tôi ─────────────────────────────────────────────────────
-
     def _build_table(self) -> None:
         cols = ("id", "common_name", "san", "key_id", "status",
                 "submitted_at", "reviewed_at")
@@ -277,7 +285,7 @@ class CSRSubmitFrame(ttk.Frame):
 
     def _build_table_actions(self) -> None:
         bar = ttk.Frame(self)
-        bar.pack(fill=tk.X, pady=(6, 0))
+        bar.pack(fill=tk.X, side=tk.BOTTOM, pady=(6, 0))
         ttk.Button(bar, text="📋 Xem CSR PEM",
                    command=self.on_view_csr).pack(side=tk.LEFT)
         ttk.Button(bar, text="🗑 Hủy CSR pending",
@@ -288,7 +296,12 @@ class CSRSubmitFrame(ttk.Frame):
     def refresh_csr_table(self) -> None:
         for iid in self.tree.get_children():
             self.tree.delete(iid)
-        for c in list_my_csr(self.app.session["id"], self.app.db_path):
+        try:
+            rows = self._fetch_csr_rows()
+        except RemoteCSRClientError as e:
+            messagebox.showerror("Không tải được CSR từ Admin", str(e))
+            return
+        for c in rows:
             san_str = ", ".join(c["san_list"]) if c.get("san_list") else "—"
             self.tree.insert(
                 "", tk.END, iid=str(c["id"]),
@@ -301,6 +314,27 @@ class CSRSubmitFrame(ttk.Frame):
                 tags=(c["status"],),
             )
 
+    def _remote_password(self) -> str:
+        if hasattr(self, "remote_password_entry"):
+            password = self.remote_password_entry.get()
+            if password:
+                self.app.remote_csr_password = password
+                return password
+        return getattr(self.app, "remote_csr_password", "")
+
+    def _fetch_csr_rows(self) -> list:
+        if not self.remote_api_url:
+            return list_my_csr(self.app.session["id"], self.app.db_path)
+        password = self._remote_password()
+        if not password:
+            return []
+        return list_customer_csrs_from_admin_api(
+            api_url=self.remote_api_url,
+            username=self.app.session["username"],
+            password=password,
+            token=self.remote_api_token,
+        )
+
     def _selected_csr_id(self) -> "int | None":
         sel = self.tree.selection()
         if not sel:
@@ -312,7 +346,20 @@ class CSRSubmitFrame(ttk.Frame):
         csr_id = self._selected_csr_id()
         if csr_id is None:
             return
-        csr = get_my_csr_by_id(csr_id, self.app.session["id"], self.app.db_path)
+        if self.remote_api_url:
+            try:
+                csr = get_customer_csr_detail_from_admin_api(
+                    api_url=self.remote_api_url,
+                    username=self.app.session["username"],
+                    password=self._remote_password(),
+                    csr_id=csr_id,
+                    token=self.remote_api_token,
+                )
+            except RemoteCSRClientError as e:
+                messagebox.showerror("Không tải được CSR từ Admin", str(e))
+                return
+        else:
+            csr = get_my_csr_by_id(csr_id, self.app.session["id"], self.app.db_path)
         if csr is None:
             return
         ViewCSRPEMDialog(self, csr)
@@ -320,6 +367,12 @@ class CSRSubmitFrame(ttk.Frame):
     def on_cancel(self) -> None:
         csr_id = self._selected_csr_id()
         if csr_id is None:
+            return
+        if self.remote_api_url:
+            messagebox.showinfo(
+                "Remote mode",
+                "CSR đang nằm trên máy Admin. Nếu cần hủy, thực hiện trong demo offline/local.",
+            )
             return
         csr = get_my_csr_by_id(csr_id, self.app.session["id"], self.app.db_path)
         if csr is None:
@@ -366,7 +419,11 @@ class ViewCSRPEMDialog(tk.Toplevel):
 
         text = tk.Text(self, font=font("mono"), wrap=tk.NONE)
         text.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 12))
-        pem = bytes(csr_record["csr_pem"]).decode("ascii", errors="replace")
+        raw_pem = csr_record["csr_pem"]
+        pem = (
+            raw_pem if isinstance(raw_pem, str)
+            else bytes(raw_pem).decode("ascii", errors="replace")
+        )
         text.insert("1.0", pem)
         text.config(state=tk.DISABLED)
 

@@ -12,7 +12,14 @@ import os
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-from services.remote_csr import submit_remote_csr, RemoteCSRError
+from services.remote_csr import (
+    submit_remote_csr,
+    list_remote_csrs,
+    get_remote_csr_detail,
+    list_remote_certs,
+    get_remote_cert_detail,
+    RemoteCSRError,
+)
 
 
 CSR_API_HOST = os.environ.get("X509_CSR_API_HOST", "0.0.0.0")
@@ -60,27 +67,75 @@ def start_csr_api_server(
                 return
             self._send_json(404, {"ok": False, "error": "not found"})
 
+        def _read_json_payload(self) -> dict:
+            size = int(self.headers.get("Content-Length", "0"))
+            if size <= 0 or size > 512 * 1024:
+                raise RemoteCSRError("invalid request size")
+            return json.loads(self.rfile.read(size).decode("utf-8"))
+
         def do_POST(self):
-            if self.path != "/api/csr/submit":
-                self._send_json(404, {"ok": False, "error": "not found"})
-                return
             if not self._authorized():
                 self._send_json(401, {"ok": False, "error": "unauthorized"})
                 return
             try:
-                size = int(self.headers.get("Content-Length", "0"))
-                if size <= 0 or size > 512 * 1024:
-                    raise RemoteCSRError("invalid request size")
-                payload = json.loads(self.rfile.read(size).decode("utf-8"))
-                rec = submit_remote_csr(
-                    username=payload.get("username", ""),
-                    password=payload.get("password", ""),
-                    key_name=payload.get("key_name", "remote-key"),
-                    csr_pem=payload.get("csr_pem", ""),
-                    db_path=db_path,
-                )
+                payload = self._read_json_payload()
+                if self.path == "/api/csr/submit":
+                    rec = submit_remote_csr(
+                        username=payload.get("username", ""),
+                        password=payload.get("password", ""),
+                        key_name=payload.get("key_name", "remote-key"),
+                        csr_pem=payload.get("csr_pem", ""),
+                        db_path=db_path,
+                    )
+                    self._send_json(201, {"ok": True, "csr": rec})
+                    return
+                if self.path == "/api/customer/csrs":
+                    rows = list_remote_csrs(
+                        username=payload.get("username", ""),
+                        password=payload.get("password", ""),
+                        status=payload.get("status") or None,
+                        db_path=db_path,
+                    )
+                    self._send_json(200, {"ok": True, "csrs": rows})
+                    return
+                if self.path == "/api/customer/csr/detail":
+                    rec = get_remote_csr_detail(
+                        username=payload.get("username", ""),
+                        password=payload.get("password", ""),
+                        csr_id=int(payload.get("csr_id", 0)),
+                        db_path=db_path,
+                    )
+                    if rec is None:
+                        self._send_json(404, {"ok": False, "error": "CSR not found"})
+                    else:
+                        self._send_json(200, {"ok": True, "csr": rec})
+                    return
+                if self.path == "/api/customer/certs":
+                    rows = list_remote_certs(
+                        username=payload.get("username", ""),
+                        password=payload.get("password", ""),
+                        status=payload.get("status") or None,
+                        db_path=db_path,
+                    )
+                    self._send_json(200, {"ok": True, "certs": rows})
+                    return
+                if self.path == "/api/customer/cert/detail":
+                    rec = get_remote_cert_detail(
+                        username=payload.get("username", ""),
+                        password=payload.get("password", ""),
+                        cert_id=int(payload.get("cert_id", 0)),
+                        db_path=db_path,
+                    )
+                    if rec is None:
+                        self._send_json(404, {"ok": False, "error": "cert not found"})
+                    else:
+                        self._send_json(200, {"ok": True, "cert": rec})
+                    return
             except json.JSONDecodeError:
                 self._send_json(400, {"ok": False, "error": "invalid JSON"})
+                return
+            except (TypeError, ValueError):
+                self._send_json(400, {"ok": False, "error": "invalid id"})
                 return
             except RemoteCSRError as e:
                 self._send_json(400, {"ok": False, "error": str(e)})
@@ -88,7 +143,7 @@ def start_csr_api_server(
             except Exception as e:
                 self._send_json(500, {"ok": False, "error": f"{type(e).__name__}: {e}"})
                 return
-            self._send_json(201, {"ok": True, "csr": rec})
+            self._send_json(404, {"ok": False, "error": "not found"})
 
     server = HTTPServer((host, port), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
