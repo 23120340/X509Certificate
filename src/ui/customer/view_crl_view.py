@@ -10,11 +10,15 @@ Layout:
 """
 
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, messagebox
 
 from ui.theme import font
 from services.crl_publish import (
     get_published_crl_info, list_crl_entries, DEFAULT_CRL_PATH,
+)
+from services.remote_csr_client import (
+    get_crl_from_admin_api,
+    RemoteCSRClientError,
 )
 
 
@@ -23,6 +27,8 @@ class ViewCRLFrame(ttk.Frame):
     def __init__(self, parent: tk.Misc, app):
         super().__init__(parent, padding=24)
         self.app = app
+        self.remote_api_url = getattr(app, "remote_csr_api_url", "")
+        self.remote_api_token = getattr(app, "remote_csr_api_token", "")
 
         ttk.Label(
             self, text="Tra cứu CRL",
@@ -123,7 +129,21 @@ class ViewCRLFrame(ttk.Frame):
         # Header
         for child in self.header_box.winfo_children():
             child.destroy()
-        info = get_published_crl_info(DEFAULT_CRL_PATH)
+        try:
+            if self.remote_api_url:
+                info, entries = get_crl_from_admin_api(
+                    api_url=self.remote_api_url,
+                    token=self.remote_api_token,
+                )
+            else:
+                info = get_published_crl_info(DEFAULT_CRL_PATH)
+                entries = list_crl_entries(
+                    DEFAULT_CRL_PATH, db_path=self.app.db_path,
+                ) if info is not None else []
+        except RemoteCSRClientError as e:
+            messagebox.showerror("Không tải được CRL từ Admin", str(e))
+            info = None
+            entries = []
         if info is None:
             ttk.Label(
                 self.header_box,
@@ -148,7 +168,13 @@ class ViewCRLFrame(ttk.Frame):
                     font=font("label"), width=14,
                 ).pack(side=tk.LEFT)
                 ttk.Label(row, text=str(info[key])).pack(side=tk.LEFT)
-            self._cached_entries = list_crl_entries(
-                DEFAULT_CRL_PATH, db_path=self.app.db_path,
-            )
+            if self.remote_api_url:
+                row = ttk.Frame(self.header_box)
+                row.pack(anchor="w", pady=1)
+                ttk.Label(
+                    row, text="Nguồn:",
+                    font=font("label"), width=14,
+                ).pack(side=tk.LEFT)
+                ttk.Label(row, text=f"Admin API {self.remote_api_url}").pack(side=tk.LEFT)
+            self._cached_entries = entries
         self._apply_filter()

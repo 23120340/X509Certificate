@@ -17,6 +17,7 @@ from services.revocation_workflow import (
     list_all_revocations, get_revocation_detail,
     approve_revocation, reject_revocation, RevocationWorkflowError,
 )
+from services.crl_publish import DEFAULT_CRL_PATH, DEFAULT_OCSP_DB_PATH
 
 
 STATUS_COLORS = {
@@ -178,6 +179,8 @@ class RevokeQueueFrame(ttk.Frame):
         try:
             result = approve_revocation(
                 req_id, self.app.session["id"], self.app.db_path,
+                ocsp_db_path=DEFAULT_OCSP_DB_PATH,
+                crl_path=DEFAULT_CRL_PATH,
             )
         except RevocationWorkflowError as e:
             messagebox.showerror("Approve thất bại", str(e))
@@ -198,11 +201,32 @@ class RevokeQueueFrame(ttk.Frame):
                     "reason": rec["reason"],
                 },
             )
+        crl_result = result.get("crl_result")
+        crl_error = result.get("crl_error")
+        if crl_result:
+            write_audit(
+                self.app.db_path, self.app.session["id"], Action.CRL_PUBLISHED,
+                target_type="crl", target_id=crl_result["crl_path"],
+                details={
+                    "revoked_count": crl_result["revoked_count"],
+                    "source": "auto_after_revoke_approve",
+                },
+            )
+        elif crl_error:
+            messagebox.showwarning(
+                "Đã approve nhưng chưa publish CRL",
+                f"Request #{req_id} đã approve, nhưng chưa cập nhật được CRL:\n{crl_error}",
+            )
+
         messagebox.showinfo(
             "Đã approve",
             f"Request #{req_id} đã approve. "
             f"Cert {'đã revoke' if result['cert_was_revoked'] else 'đã được revoke trước đó'}.\n"
-            f"Đừng quên bấm 'Publish CRL Now' để cập nhật CRL/OCSP.",
+            + (
+                f"CRL đã tự cập nhật ({crl_result['revoked_count']} serial)."
+                if crl_result else
+                "Hãy vào mục Cập nhật CRL để publish thủ công."
+            ),
         )
         self.refresh()
 

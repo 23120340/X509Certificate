@@ -135,11 +135,14 @@ class LoginFrame(ttk.Frame):
             state=tk.NORMAL if mode in ("admin", "client") else tk.DISABLED
         )
         if mode == "offline":
+            self.app.stop_csr_api()
             self.app.set_remote_csr_api("", "")
             self.lan_status.configure(text="Offline: dùng database cục bộ trên máy này.")
         elif mode == "admin":
+            self.app.set_remote_csr_api("", "")
             self.lan_status.configure(text="Admin mode: bật API rồi đăng nhập admin để duyệt CSR.")
         else:
+            self.app.stop_csr_api()
             self.lan_status.configure(text="Client mode: nhập URL máy Admin, Test API, rồi đăng nhập customer.")
 
     def on_start_admin_api(self) -> None:
@@ -151,16 +154,48 @@ class LoginFrame(ttk.Frame):
             messagebox.showerror("Port không hợp lệ", "Port phải từ 1024 đến 65535.")
             return
         host = self.admin_host_entry.get().strip() or "0.0.0.0"
+        token = self.lan_token_entry.get().strip()
+        if host not in ("localhost", "127.0.0.1", "::1") and not token:
+            messagebox.showerror(
+                "Thiếu token",
+                "Bật CSR API trên LAN cần token để tránh máy khác gửi request trái phép.",
+            )
+            return
         try:
-            self.app.start_csr_api(host=host, port=port,
-                                   token=self.lan_token_entry.get())
-        except OSError as e:
+            self.app.start_csr_api(host=host, port=port, token=token)
+        except (OSError, ValueError) as e:
             messagebox.showerror("Không bật được CSR API", str(e))
             return
+        self._sync_lan_crl_ocsp_urls(host)
         self.lan_status.configure(
             text=f"CSR API đã bật tại {host}:{port}. Client dùng http://<IP máy này>:{port}."
         )
         messagebox.showinfo("CSR API đã bật", f"Server đang nghe tại {host}:{port}")
+
+    def _sync_lan_crl_ocsp_urls(self, bind_host: str) -> None:
+        """Use a LAN-reachable host in cert CRLDP/AIA while Admin API is enabled."""
+        import socket
+        from services.infra_manager import PROD_CRL_PORT, PROD_OCSP_PORT
+        from services.system_config import set_config
+
+        host = bind_host
+        if host in ("", "0.0.0.0", "::"):
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                    s.connect(("8.8.8.8", 80))
+                    host = s.getsockname()[0]
+            except OSError:
+                host = socket.gethostbyname(socket.gethostname())
+        if host in ("localhost", "127.0.0.1", "::1"):
+            return
+        set_config(
+            "prod_crl_url", f"http://{host}:{PROD_CRL_PORT}/crl.pem",
+            updated_by=None, db_path=self.app.db_path,
+        )
+        set_config(
+            "prod_ocsp_url", f"http://{host}:{PROD_OCSP_PORT}/ocsp",
+            updated_by=None, db_path=self.app.db_path,
+        )
 
     def on_apply_client_api(self) -> None:
         url = self.client_url_entry.get().strip().rstrip("/")

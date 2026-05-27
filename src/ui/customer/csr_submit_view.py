@@ -144,7 +144,10 @@ class CSRSubmitFrame(ttk.Frame):
 
     def refresh_keys(self) -> None:
         """Reload list keypair từ DB vào combobox."""
-        self._keys = list_keys(self.app.session["id"], self.app.db_path)
+        self._keys = [
+            k for k in list_keys(self.app.session["id"], self.app.db_path)
+            if not k.get("is_public_only")
+        ]
         values = [
             f"#{k['id']} — {k['name']} (RSA-{k['key_size']})"
             for k in self._keys

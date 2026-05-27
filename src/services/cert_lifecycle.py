@@ -30,6 +30,7 @@ from core.cert_builder import reissue_cert_for_renewal
 from db.connection import conn_scope, transaction
 from services.ca_admin import load_active_root_ca_with_key, CAError
 from services.crl_publish import DEFAULT_OCSP_DB_PATH, sync_ocsp_db
+from services.system_config import get_config
 
 
 VALID_STATUS_FILTERS = ("active", "expired", "revoked", "all")
@@ -214,8 +215,10 @@ def renew_cert(
     # Resolve default URLs runtime
     if ocsp_url is None or crl_url is None:
         from services.infra_manager import prod_crl_url, prod_ocsp_url
-        if ocsp_url is None: ocsp_url = prod_ocsp_url()
-        if crl_url  is None: crl_url  = prod_crl_url()
+        if ocsp_url is None:
+            ocsp_url = get_config("prod_ocsp_url", db_path) or prod_ocsp_url()
+        if crl_url is None:
+            crl_url = get_config("prod_crl_url", db_path) or prod_crl_url()
 
     old = get_cert_detail(cert_id, db_path)
     if old is None:

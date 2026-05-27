@@ -211,9 +211,28 @@ def check_hostname(cert, hostname: str):
     ip_addresses = [str(ip) for ip in san.get_values_for_type(x509.IPAddress)]
     all_names   = dns_names + ip_addresses
 
+    try:
+        ipaddress.ip_address(hostname)
+        if hostname in ip_addresses:
+            return True, f"Hostname '{hostname}' KHỚP với SAN: {all_names}"
+    except ValueError:
+        if any(_dnsname_matches(pattern, hostname) for pattern in dns_names):
+            return True, f"Hostname '{hostname}' KHỚP với SAN: {all_names}"
+
     if hostname in dns_names or hostname in ip_addresses:
         return True, f"Hostname '{hostname}' KHỚP với SAN: {all_names}"
     return False, f"Hostname '{hostname}' KHÔNG khớp với SAN: {all_names}"
+
+
+def _dnsname_matches(pattern: str, hostname: str) -> bool:
+    pattern = (pattern or "").lower().rstrip(".")
+    hostname = (hostname or "").lower().rstrip(".")
+    if pattern == hostname:
+        return True
+    if not pattern.startswith("*."):
+        return False
+    suffix = pattern[1:]
+    return hostname.endswith(suffix) and hostname.count(".") == pattern.count(".")
 
 
 def _verify_crl_signature(crl, trusted_cas):

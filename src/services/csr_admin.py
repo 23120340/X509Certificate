@@ -31,13 +31,18 @@ from core.csr import parse_csr, verify_csr_signature
 from db.connection import conn_scope, transaction
 from services.ca_admin import load_active_root_ca_with_key, CAError
 from services.infra_manager import prod_crl_url, prod_ocsp_url
+from services.system_config import get_config
 
 
 # Default URLs cho CRL Distribution Points + AIA OCSP trong cert phát hành.
 # Lấy từ infra_manager → tự động khớp env override (PROD_*_PORT).
 # Hàm gọi runtime để pickup env var khi process boot (không cache module-load).
-def _default_crl_url():  return prod_crl_url()
-def _default_ocsp_url(): return prod_ocsp_url()
+def _default_crl_url(db_path: str):
+    return get_config("prod_crl_url", db_path) or prod_crl_url()
+
+
+def _default_ocsp_url(db_path: str):
+    return get_config("prod_ocsp_url", db_path) or prod_ocsp_url()
 
 MAX_REJECT_REASON_LEN = 500
 ALLOWED_STATUS = ("pending", "approved", "rejected")
@@ -166,8 +171,8 @@ def approve_csr(
         raise CSRAdminError("validity_days phải >= 1.")
 
     # Resolve default URLs runtime (pickup env var override nếu có)
-    if ocsp_url is None: ocsp_url = _default_ocsp_url()
-    if crl_url  is None: crl_url  = _default_crl_url()
+    if ocsp_url is None: ocsp_url = _default_ocsp_url(db_path)
+    if crl_url  is None: crl_url  = _default_crl_url(db_path)
 
     # Read CSR row trước (ngoài transaction) để load CA key + build cert
     with conn_scope(db_path) as conn:

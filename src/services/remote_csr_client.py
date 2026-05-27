@@ -196,3 +196,17 @@ def list_revocation_requests_from_admin_api(
         token=token,
     )
     return data["revocation_requests"]
+
+
+def get_crl_from_admin_api(
+    *,
+    api_url: str,
+    token: str = "",
+) -> tuple["dict | None", list[dict]]:
+    data = _post_json(
+        api_url=api_url,
+        path="/api/crl/current",
+        payload={},
+        token=token,
+    )
+    return data.get("crl_info"), data.get("crl_entries", [])

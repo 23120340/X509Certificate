@@ -10,6 +10,7 @@ Machine A runs the Admin app and starts this server. Machine B posts a CSR to
 import json
 import os
 import threading
+import ipaddress
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from services.remote_csr import (
@@ -22,11 +23,26 @@ from services.remote_csr import (
     list_remote_revocation_requests,
     RemoteCSRError,
 )
+from services.crl_publish import (
+    DEFAULT_CRL_PATH,
+    get_published_crl_info,
+    list_crl_entries,
+)
 
 
 CSR_API_HOST = os.environ.get("X509_CSR_API_HOST", "0.0.0.0")
 CSR_API_PORT = int(os.environ.get("X509_CSR_API_PORT", "8787"))
 CSR_API_TOKEN = os.environ.get("X509_CSR_API_TOKEN", "")
+
+
+def _is_loopback_bind(host: str) -> bool:
+    host = (host or "").strip().lower()
+    if host in ("localhost", "127.0.0.1", "::1"):
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
 
 
 def _json_bytes(payload: dict) -> bytes:
@@ -42,6 +58,10 @@ def start_csr_api_server(
     log_callback=None,
 ) -> HTTPServer:
     """Start the LAN CSR API in a background thread."""
+    if not token and not _is_loopback_bind(host):
+        raise ValueError(
+            "CSR API token is required when binding to a LAN/public address."
+        )
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "X509CSRAPI/1.0"
@@ -150,6 +170,14 @@ def start_csr_api_server(
                         db_path=db_path,
                     )
                     self._send_json(200, {"ok": True, "revocation_requests": rows})
+                    return
+                if self.path == "/api/crl/current":
+                    info = get_published_crl_info(DEFAULT_CRL_PATH)
+                    entries = list_crl_entries(DEFAULT_CRL_PATH, db_path=db_path)
+                    self._send_json(
+                        200,
+                        {"ok": True, "crl_info": info, "crl_entries": entries},
+                    )
                     return
             except json.JSONDecodeError:
                 self._send_json(400, {"ok": False, "error": "invalid JSON"})

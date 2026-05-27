@@ -67,12 +67,6 @@ class App:
         self.remote_csr_api_url = os.environ.get("X509_REMOTE_CSR_API_URL", "").strip()
         self.remote_csr_api_token = os.environ.get("X509_CSR_API_TOKEN", "").strip()
         self.remote_csr_password = ""
-        if os.environ.get("X509_CSR_API_ENABLED", "").lower() in ("1", "true", "yes"):
-            self.start_csr_api(
-                host=os.environ.get("X509_CSR_API_HOST", "0.0.0.0"),
-                port=int(os.environ.get("X509_CSR_API_PORT", "8787")),
-                token=os.environ.get("X509_CSR_API_TOKEN", ""),
-            )
 
         self.root = tk.Tk()
         self.root.title(WINDOW_TITLE)
@@ -106,6 +100,17 @@ class App:
         display_host = "localhost" if host in ("0.0.0.0", "") else host
         self.csr_api_url = f"http://{display_host}:{port}"
         return self.csr_api_url
+
+    def stop_csr_api(self) -> None:
+        """Stop the LAN CSR API if it is currently running."""
+        if self.csr_api is not None:
+            try:
+                self.csr_api.shutdown()
+                self.csr_api.server_close()
+            except Exception:
+                pass
+            self.csr_api = None
+        self.csr_api_url = None
 
     def set_remote_csr_api(self, url: str, token: str = "") -> None:
         """Configure this app instance as a LAN client for remote CSR submit."""

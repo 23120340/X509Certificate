@@ -80,7 +80,9 @@ class MyKeysFrame(ttk.Frame):
             self.tree.insert(
                 "", tk.END, iid=str(k["id"]),
                 values=(
-                    k["id"], k["name"], k["algorithm"], k["key_size"],
+                    k["id"],
+                    k["name"] + (" (LAN public-only)" if k.get("is_public_only") else ""),
+                    k["algorithm"], k["key_size"],
                     k["created_at"][:19].replace("T", " "),
                 ),
             )

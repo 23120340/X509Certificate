@@ -27,7 +27,12 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from db.connection import conn_scope, transaction
-from services.crl_publish import DEFAULT_OCSP_DB_PATH, sync_ocsp_db
+from services.crl_publish import (
+    DEFAULT_OCSP_DB_PATH,
+    sync_ocsp_db,
+    publish_crl,
+    CRLPublishError,
+)
 
 
 MAX_REASON_LEN = 500
@@ -172,6 +177,7 @@ def get_revocation_detail(req_id: int, db_path: str) -> Optional[dict]:
 def approve_revocation(
     req_id: int, admin_id: int, db_path: str,
     ocsp_db_path: "str | None" = DEFAULT_OCSP_DB_PATH,
+    crl_path: "str | None" = None,
 ) -> dict:
     """
     Approve revocation request atomic:
@@ -225,6 +231,18 @@ def approve_revocation(
         )
 
     sync_ocsp_db(db_path, ocsp_db_path)
+    crl_result = None
+    crl_error = None
+    if crl_path:
+        try:
+            crl_result = publish_crl(
+                admin_id=admin_id,
+                db_path=db_path,
+                crl_path=crl_path,
+                ocsp_db_path=ocsp_db_path,
+            )
+        except CRLPublishError as e:
+            crl_error = str(e)
     return {
         "id":               req_id,
         "issued_cert_id":   req["issued_cert_id"],
@@ -232,6 +250,8 @@ def approve_revocation(
         "reviewed_by":      admin_id,
         "cert_was_revoked": cert_was_revoked,
         "cert_revoked_at":  now if cert_was_revoked else cert["revoked_at"],
+        "crl_result":       crl_result,
+        "crl_error":        crl_error,
     }
 
 

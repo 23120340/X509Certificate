@@ -15,7 +15,7 @@ from ui.theme import font
 from services.audit import write_audit, Action
 from services.crl_publish import (
     publish_crl, get_published_crl_info, snapshot_revoked_serials,
-    DEFAULT_CRL_PATH, DEFAULT_OCSP_DB_PATH, CRLPublishError,
+    list_crl_entries, DEFAULT_CRL_PATH, DEFAULT_OCSP_DB_PATH, CRLPublishError,
 )
 
 
@@ -41,6 +41,7 @@ class CRLPublishFrame(ttk.Frame):
 
         self._build_current_info()
         self._build_pending_info()
+        self._build_crl_entries()
         self._build_actions()
         self.refresh()
 
@@ -55,6 +56,35 @@ class CRLPublishFrame(ttk.Frame):
             self, text="Snapshot DB (sẽ vào CRL khi publish)", padding=12,
         )
         self.pending_box.pack(fill=tk.X, pady=(12, 0))
+
+    def _build_crl_entries(self) -> None:
+        self.entries_box = ttk.LabelFrame(
+            self, text="Revoke List trong CRL hiện hành", padding=12,
+        )
+        self.entries_box.pack(fill=tk.BOTH, expand=True, pady=(12, 0))
+
+        cols = ("serial", "common_name", "owner", "revocation_date")
+        self.crl_tree = ttk.Treeview(
+            self.entries_box, columns=cols, show="headings", height=8,
+        )
+        labels = {
+            "serial": "Serial",
+            "common_name": "Domain (CN)",
+            "owner": "Owner",
+            "revocation_date": "Thu hồi lúc",
+        }
+        widths = {"serial": 320, "common_name": 180, "owner": 100,
+                  "revocation_date": 140}
+        for c in cols:
+            self.crl_tree.heading(c, text=labels[c])
+            self.crl_tree.column(c, width=widths[c], anchor="w")
+        self.crl_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        vsb = ttk.Scrollbar(
+            self.entries_box, orient="vertical", command=self.crl_tree.yview,
+        )
+        self.crl_tree.configure(yscrollcommand=vsb.set)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
 
     def _build_actions(self) -> None:
         bar = ttk.Frame(self)
@@ -132,6 +162,19 @@ class CRLPublishFrame(ttk.Frame):
                     text="✓ Số serial trùng với CRL hiện hành.",
                     foreground="#1e8449",
                 ).pack(anchor="w", pady=(4, 0))
+
+        for iid in self.crl_tree.get_children():
+            self.crl_tree.delete(iid)
+        for e in list_crl_entries(DEFAULT_CRL_PATH, db_path=self.app.db_path):
+            self.crl_tree.insert(
+                "", tk.END,
+                values=(
+                    e["serial_hex"][:48] + ("..." if len(e["serial_hex"]) > 48 else ""),
+                    e["common_name"] or "-",
+                    e["owner_username"] or "-",
+                    e["revocation_date"][:19].replace("T", " "),
+                ),
+            )
 
     def on_publish(self) -> None:
         try:

@@ -127,7 +127,9 @@ def list_keys(owner_id: int, db_path: str) -> "list[dict]":
     """Danh sách keypair của user (metadata, không có private key)."""
     with conn_scope(db_path) as conn:
         rows = conn.execute(
-            "SELECT id, name, algorithm, key_size, public_key_pem, created_at "
+            "SELECT id, name, algorithm, key_size, public_key_pem, created_at, "
+            "       CASE WHEN length(encrypted_private_key) = 0 THEN 1 ELSE 0 END "
+            "       AS is_public_only "
             "FROM customer_keys WHERE owner_id = ? ORDER BY id DESC",
             (owner_id,),
         ).fetchall()
@@ -140,7 +142,9 @@ def get_key_meta(key_id: int, owner_id: int, db_path: str) -> Optional[dict]:
     with conn_scope(db_path) as conn:
         row = conn.execute(
             "SELECT id, owner_id, name, algorithm, key_size, public_key_pem, "
-            "       created_at FROM customer_keys "
+            "       created_at, "
+            "       CASE WHEN length(encrypted_private_key) = 0 THEN 1 ELSE 0 END "
+            "       AS is_public_only FROM customer_keys "
             "WHERE id = ? AND owner_id = ?",
             (key_id, owner_id),
         ).fetchone()
@@ -162,6 +166,10 @@ def load_private_key(key_id: int, owner_id: int, db_path: str):
     if row is None:
         raise CustomerKeyError(
             f"Không tìm thấy keypair id={key_id} thuộc về bạn."
+        )
+    if not row["encrypted_private_key"] or not row["gcm_nonce"]:
+        raise CustomerKeyError(
+            "Keypair này chỉ có public key từ CSR LAN; private key nằm trên máy client gốc."
         )
     pem = decrypt_blob(
         row["gcm_nonce"], row["encrypted_private_key"], aad=_aad_for(key_id),
