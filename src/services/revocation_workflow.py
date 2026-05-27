@@ -27,6 +27,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from db.connection import conn_scope, transaction
+from services.crl_publish import DEFAULT_OCSP_DB_PATH, sync_ocsp_db
 
 
 MAX_REASON_LEN = 500
@@ -170,6 +171,7 @@ def get_revocation_detail(req_id: int, db_path: str) -> Optional[dict]:
 
 def approve_revocation(
     req_id: int, admin_id: int, db_path: str,
+    ocsp_db_path: "str | None" = DEFAULT_OCSP_DB_PATH,
 ) -> dict:
     """
     Approve revocation request atomic:
@@ -222,6 +224,7 @@ def approve_revocation(
             (now, admin_id, req_id),
         )
 
+    sync_ocsp_db(db_path, ocsp_db_path)
     return {
         "id":               req_id,
         "issued_cert_id":   req["issued_cert_id"],

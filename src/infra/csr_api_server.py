@@ -18,6 +18,8 @@ from services.remote_csr import (
     get_remote_csr_detail,
     list_remote_certs,
     get_remote_cert_detail,
+    submit_remote_revocation_request,
+    list_remote_revocation_requests,
     RemoteCSRError,
 )
 
@@ -130,6 +132,24 @@ def start_csr_api_server(
                         self._send_json(404, {"ok": False, "error": "cert not found"})
                     else:
                         self._send_json(200, {"ok": True, "cert": rec})
+                    return
+                if self.path == "/api/customer/revoke/submit":
+                    rec = submit_remote_revocation_request(
+                        username=payload.get("username", ""),
+                        password=payload.get("password", ""),
+                        cert_id=int(payload.get("cert_id", 0)),
+                        reason=payload.get("reason", ""),
+                        db_path=db_path,
+                    )
+                    self._send_json(201, {"ok": True, "revocation_request": rec})
+                    return
+                if self.path == "/api/customer/revoke/requests":
+                    rows = list_remote_revocation_requests(
+                        username=payload.get("username", ""),
+                        password=payload.get("password", ""),
+                        db_path=db_path,
+                    )
+                    self._send_json(200, {"ok": True, "revocation_requests": rows})
                     return
             except json.JSONDecodeError:
                 self._send_json(400, {"ok": False, "error": "invalid JSON"})

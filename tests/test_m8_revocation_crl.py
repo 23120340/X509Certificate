@@ -176,6 +176,63 @@ def test_approve_revocation_marks_cert_revoked():
         env.cleanup()
 
 
+def test_direct_revoke_syncs_ocsp_immediately():
+    env = TestEnv()
+    try:
+        cert_id = env.issue_cert(env.alice_id, "ocsp-direct.com")
+        ocsp_db_path = os.path.join(env.tmpdir, "ocsp_db.json")
+
+        revoke_cert(
+            cert_id, env.admin_id, "compromised", env.db_path,
+            ocsp_db_path=ocsp_db_path,
+        )
+
+        conn = get_conn(env.db_path)
+        try:
+            serial = int(conn.execute(
+                "SELECT serial_hex FROM issued_certs WHERE id = ?", (cert_id,),
+            ).fetchone()["serial_hex"], 16)
+        finally:
+            conn.close()
+        with open(ocsp_db_path) as f:
+            ocsp_data = json.load(f)
+        assert str(serial) in ocsp_data
+        print("  [ocsp-direct] PASS ✓ — revoke trực tiếp sync OCSP ngay")
+    finally:
+        env.cleanup()
+
+
+def test_approve_revocation_syncs_ocsp_immediately_without_crl_publish():
+    env = TestEnv()
+    try:
+        cert_id = env.issue_cert(env.alice_id, "ocsp-approve.com")
+        req = submit_revoke_request(
+            cert_id, env.alice_id, "no longer needed", env.db_path,
+        )
+        ocsp_db_path = os.path.join(env.tmpdir, "ocsp_db.json")
+        crl_path = os.path.join(env.tmpdir, "crl.pem")
+
+        approve_revocation(
+            req["id"], env.admin_id, env.db_path,
+            ocsp_db_path=ocsp_db_path,
+        )
+
+        assert not os.path.exists(crl_path), "Approve không được tự publish CRL"
+        conn = get_conn(env.db_path)
+        try:
+            serial = int(conn.execute(
+                "SELECT serial_hex FROM issued_certs WHERE id = ?", (cert_id,),
+            ).fetchone()["serial_hex"], 16)
+        finally:
+            conn.close()
+        with open(ocsp_db_path) as f:
+            ocsp_data = json.load(f)
+        assert str(serial) in ocsp_data
+        print("  [ocsp-approve] PASS ✓ — approve sync OCSP ngay, CRL vẫn chờ publish")
+    finally:
+        env.cleanup()
+
+
 def test_approve_when_already_revoked():
     """Cert đã revoke trực tiếp → approve request không ghi đè revoked_at cũ."""
     env = TestEnv()
@@ -411,6 +468,8 @@ TESTS = [
     test_submit_revoke_request_happy,
     test_submit_validation,
     test_approve_revocation_marks_cert_revoked,
+    test_direct_revoke_syncs_ocsp_immediately,
+    test_approve_revocation_syncs_ocsp_immediately_without_crl_publish,
     test_approve_when_already_revoked,
     test_reject_revocation,
     test_double_approve_blocked,

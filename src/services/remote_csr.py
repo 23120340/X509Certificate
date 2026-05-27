@@ -21,6 +21,11 @@ from services.audit import write_audit, Action
 from services.auth import login, register_user, AuthError
 from services.cert_lifecycle import list_certs_for_owner, get_cert_detail
 from services.csr_workflow import list_my_csr, get_my_csr_by_id
+from services.revocation_workflow import (
+    submit_revoke_request,
+    list_my_revocation_requests,
+    RevocationWorkflowError,
+)
 
 
 class RemoteCSRError(Exception):
@@ -239,3 +244,34 @@ def get_remote_cert_detail(
     if rec is not None and isinstance(rec.get("cert_pem"), (bytes, bytearray)):
         rec["cert_pem"] = bytes(rec["cert_pem"]).decode("ascii", errors="replace")
     return rec
+
+
+def submit_remote_revocation_request(
+    *,
+    username: str,
+    password: str,
+    cert_id: int,
+    reason: str,
+    db_path: str,
+) -> dict:
+    user = _login_customer(username, password, db_path)
+    try:
+        rec = submit_revoke_request(cert_id, user["id"], reason, db_path)
+    except RevocationWorkflowError as e:
+        raise RemoteCSRError(str(e)) from e
+    write_audit(
+        db_path, user["id"], Action.REVOKE_REQUESTED,
+        target_type="revocation_request", target_id=str(rec["id"]),
+        details={"cert_id": cert_id, "source": "remote_csr_api"},
+    )
+    return rec
+
+
+def list_remote_revocation_requests(
+    *,
+    username: str,
+    password: str,
+    db_path: str,
+) -> list[dict]:
+    user = _login_customer(username, password, db_path)
+    return list_my_revocation_requests(user["id"], db_path)

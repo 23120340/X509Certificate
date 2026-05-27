@@ -29,6 +29,7 @@ from cryptography.hazmat.primitives import serialization
 from core.cert_builder import reissue_cert_for_renewal
 from db.connection import conn_scope, transaction
 from services.ca_admin import load_active_root_ca_with_key, CAError
+from services.crl_publish import DEFAULT_OCSP_DB_PATH, sync_ocsp_db
 
 
 VALID_STATUS_FILTERS = ("active", "expired", "revoked", "all")
@@ -147,6 +148,7 @@ def get_cert_detail(
 
 def revoke_cert(
     cert_id: int, admin_id: int, reason: str, db_path: str,
+    ocsp_db_path: "str | None" = DEFAULT_OCSP_DB_PATH,
 ) -> dict:
     """
     Đánh dấu cert đã thu hồi. CRL chưa publish ngay; sẽ snapshot qua
@@ -180,6 +182,7 @@ def revoke_cert(
             (now, reason, cert_id),
         )
 
+    sync_ocsp_db(db_path, ocsp_db_path)
     detail = get_cert_detail(cert_id, db_path)
     return detail
 

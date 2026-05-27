@@ -19,6 +19,12 @@ from services.revocation_workflow import (
     submit_revoke_request, list_my_revocation_requests,
     RevocationWorkflowError,
 )
+from services.remote_csr_client import (
+    list_customer_certs_from_admin_api,
+    submit_revocation_to_admin_api,
+    list_revocation_requests_from_admin_api,
+    RemoteCSRClientError,
+)
 
 
 STATUS_COLORS = {
@@ -33,6 +39,8 @@ class RevokeRequestFrame(ttk.Frame):
     def __init__(self, parent: tk.Misc, app):
         super().__init__(parent, padding=24)
         self.app = app
+        self.remote_api_url = getattr(app, "remote_csr_api_url", "")
+        self.remote_api_token = getattr(app, "remote_csr_api_token", "")
 
         ttk.Label(
             self, text="Yêu cầu thu hồi",
@@ -84,20 +92,33 @@ class RevokeRequestFrame(ttk.Frame):
         self.reason_text = tk.Text(form, height=4, width=48, wrap=tk.WORD)
         self.reason_text.grid(row=1, column=1, pady=4, padx=4, sticky="ew")
 
+        submit_row = 2
+        if self.remote_api_url:
+            ttk.Label(form, text="Mật khẩu customer trên Admin:").grid(
+                row=2, column=0, sticky="e", pady=4, padx=4,
+            )
+            self.remote_password_entry = ttk.Entry(form, width=48, show="*")
+            self.remote_password_entry.grid(
+                row=2, column=1, pady=4, padx=4, sticky="ew"
+            )
+            if getattr(self.app, "remote_csr_password", ""):
+                self.remote_password_entry.insert(0, self.app.remote_csr_password)
+            submit_row = 3
+
         ttk.Button(form, text="Gửi yêu cầu",
                    command=self.on_submit).grid(
-            row=2, column=1, sticky="w", pady=(8, 0), padx=4,
+            row=submit_row, column=1, sticky="w", pady=(8, 0), padx=4,
         )
         form.columnconfigure(1, weight=1)
 
     def refresh_certs(self) -> None:
         """Reload list cert active của user vào combobox."""
-        self._active_certs = [
-            c for c in list_certs_for_owner(
-                self.app.session["id"], self.app.db_path,
-            )
-            if c["status"] == "active"
-        ]
+        try:
+            rows = self._fetch_certs()
+        except RemoteCSRClientError as e:
+            messagebox.showerror("Không tải được cert từ Admin", str(e))
+            rows = []
+        self._active_certs = [c for c in rows if c["status"] == "active"]
         values = [
             f"#{c['id']} — {c['common_name']} "
             f"(serial {c['serial_hex'][:12]}…)"
@@ -115,6 +136,28 @@ class RevokeRequestFrame(ttk.Frame):
             return None
         return self._active_certs[idx]["id"]
 
+    def _remote_password(self) -> str:
+        if hasattr(self, "remote_password_entry"):
+            password = self.remote_password_entry.get()
+            if password:
+                self.app.remote_csr_password = password
+                return password
+        return getattr(self.app, "remote_csr_password", "")
+
+    def _fetch_certs(self) -> list:
+        if not self.remote_api_url:
+            return list_certs_for_owner(self.app.session["id"], self.app.db_path)
+        password = self._remote_password()
+        if not password:
+            return []
+        return list_customer_certs_from_admin_api(
+            api_url=self.remote_api_url,
+            username=self.app.session["username"],
+            password=password,
+            status="active",
+            token=self.remote_api_token,
+        )
+
     def on_submit(self) -> None:
         cert_id = self._selected_cert_id()
         if cert_id is None:
@@ -124,6 +167,27 @@ class RevokeRequestFrame(ttk.Frame):
             )
             return
         reason = self.reason_text.get("1.0", tk.END).strip()
+        if self.remote_api_url:
+            try:
+                req = submit_revocation_to_admin_api(
+                    api_url=self.remote_api_url,
+                    username=self.app.session["username"],
+                    password=self._remote_password(),
+                    cert_id=cert_id,
+                    reason=reason,
+                    token=self.remote_api_token,
+                )
+            except RemoteCSRClientError as e:
+                messagebox.showerror("Gửi yêu cầu thất bại", str(e))
+                return
+            messagebox.showinfo(
+                "Đã gửi", f"Yêu cầu #{req['id']} đã gửi tới admin.",
+            )
+            self.reason_text.delete("1.0", tk.END)
+            self.refresh_certs()
+            self.refresh_requests()
+            return
+
         try:
             req = submit_revoke_request(
                 cert_id, self.app.session["id"], reason, self.app.db_path,
@@ -178,9 +242,12 @@ class RevokeRequestFrame(ttk.Frame):
         self._requests_by_id = {}
         for iid in self.tree.get_children():
             self.tree.delete(iid)
-        for r in list_my_revocation_requests(
-            self.app.session["id"], self.app.db_path,
-        ):
+        try:
+            rows = self._fetch_requests()
+        except RemoteCSRClientError as e:
+            messagebox.showerror("Không tải được yêu cầu từ Admin", str(e))
+            rows = []
+        for r in rows:
             self._requests_by_id[int(r["id"])] = r
             reason = r["reason"] or ""
             reason_preview = reason[:60] + ("..." if len(reason) > 60 else "")
@@ -196,6 +263,21 @@ class RevokeRequestFrame(ttk.Frame):
                 ),
                 tags=(r["status"],),
             )
+
+    def _fetch_requests(self) -> list:
+        if not self.remote_api_url:
+            return list_my_revocation_requests(
+                self.app.session["id"], self.app.db_path,
+            )
+        password = self._remote_password()
+        if not password:
+            return []
+        return list_revocation_requests_from_admin_api(
+            api_url=self.remote_api_url,
+            username=self.app.session["username"],
+            password=password,
+            token=self.remote_api_token,
+        )
 
     def _selected_request(self) -> "dict | None":
         sel = self.tree.selection()

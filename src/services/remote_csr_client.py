@@ -157,3 +157,42 @@ def get_customer_cert_detail_from_admin_api(
         token=token,
     )
     return data["cert"]
+
+
+def submit_revocation_to_admin_api(
+    *,
+    api_url: str,
+    username: str,
+    password: str,
+    cert_id: int,
+    reason: str,
+    token: str = "",
+) -> dict:
+    data = _post_json(
+        api_url=api_url,
+        path="/api/customer/revoke/submit",
+        payload={
+            "username": username,
+            "password": password,
+            "cert_id": cert_id,
+            "reason": reason,
+        },
+        token=token,
+    )
+    return data["revocation_request"]
+
+
+def list_revocation_requests_from_admin_api(
+    *,
+    api_url: str,
+    username: str,
+    password: str,
+    token: str = "",
+) -> list[dict]:
+    data = _post_json(
+        api_url=api_url,
+        path="/api/customer/revoke/requests",
+        payload={"username": username, "password": password},
+        token=token,
+    )
+    return data["revocation_requests"]

@@ -69,6 +69,27 @@ def snapshot_revoked_serials(db_path: str) -> "list[int]":
 
 # ── Publish ──────────────────────────────────────────────────────────────────
 
+def sync_ocsp_db(
+    db_path: str,
+    ocsp_db_path: Optional[str] = DEFAULT_OCSP_DB_PATH,
+) -> "dict | None":
+    """
+    Sync the OCSP responder JSON from the current DB revocation snapshot.
+
+    This does not require Root CA signing, so revoke flows can call it
+    immediately while CRL publication remains a separate manual snapshot.
+    """
+    if not ocsp_db_path:
+        return None
+    serials = snapshot_revoked_serials(db_path)
+    os.makedirs(os.path.dirname(ocsp_db_path) or ".", exist_ok=True)
+    save_revoked_list(serials, ocsp_db_path)
+    return {
+        "revoked_count": len(serials),
+        "ocsp_db_path": os.path.abspath(ocsp_db_path),
+    }
+
+
 def publish_crl(
     admin_id: int,
     db_path: str,
@@ -97,8 +118,7 @@ def publish_crl(
     save_crl(crl, crl_path)
 
     if ocsp_db_path:
-        os.makedirs(os.path.dirname(ocsp_db_path) or ".", exist_ok=True)
-        save_revoked_list(serials, ocsp_db_path)
+        sync_ocsp_db(db_path, ocsp_db_path)
 
     try:
         this_update = crl.last_update_utc.isoformat()
