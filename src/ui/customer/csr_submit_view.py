@@ -13,6 +13,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 from ui.theme import font
+from ui.common import fmt_local
 from ui.widgets.modal import fit_to_content
 from core.csr import build_csr, csr_to_pem
 from services.customer_keys import list_keys, load_private_key, CustomerKeyError
@@ -149,7 +150,8 @@ class CSRSubmitFrame(ttk.Frame):
             if not k.get("is_public_only")
         ]
         values = [
-            f"#{k['id']} — {k['name']} (RSA-{k['key_size']})"
+            f"#{k['id']} — {k['name']} ({k.get('algorithm', 'RSA')}"
+            + (f"-{k['key_size']}" if k.get('key_size') else "") + ")"
             for k in self._keys
         ]
         self.key_combo["values"] = values
@@ -311,8 +313,8 @@ class CSRSubmitFrame(ttk.Frame):
                 values=(
                     c["id"], c["common_name"], san_str,
                     c["customer_key_id"], c["status"],
-                    c["submitted_at"][:19].replace("T", " "),
-                    (c["reviewed_at"] or "")[:19].replace("T", " ") if c["reviewed_at"] else "—",
+                    fmt_local(c["submitted_at"]),
+                    fmt_local(c["reviewed_at"]) if c["reviewed_at"] else "—",
                 ),
                 tags=(c["status"],),
             )
@@ -395,6 +397,11 @@ class CSRSubmitFrame(ttk.Frame):
         except CSRError as e:
             messagebox.showerror("Lỗi", str(e))
             return
+        write_audit(
+            self.app.db_path, self.app.session["id"], Action.CSR_CANCELLED,
+            target_type="csr", target_id=str(csr_id),
+            details={"common_name": csr["common_name"]},
+        )
         self.refresh_csr_table()
 
 

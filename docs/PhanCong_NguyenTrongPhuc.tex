@@ -1,0 +1,1068 @@
+% !TEX program = xelatex
+%==============================================================================
+%  Phân công code vấn đáp đồ án X509Certificate
+%  Phần việc chi tiết: NGUYỄN TRỌNG PHÚC
+%  — Lõi mật mã, Root CA & Phát hành chứng chỉ —
+%
+%  Biên dịch:  xelatex PhanCong_NguyenTrongPhuc.tex  (chạy 2 lần để có mục lục)
+%==============================================================================
+\documentclass[12pt,a4paper]{article}
+
+% ---- Font (XeLaTeX, hỗ trợ Unicode tiếng Việt đầy đủ) -----------------------
+\usepackage{fontspec}
+\setmainfont{Latin Modern Roman}
+\setsansfont{Latin Modern Sans}
+\setmonofont{Latin Modern Mono}
+
+% ---- Bố cục trang -----------------------------------------------------------
+\usepackage[a4paper,margin=2.4cm]{geometry}
+\usepackage{setspace}\setstretch{1.18}
+\usepackage{parskip}
+\usepackage{amssymb} % \square cho checklist
+\usepackage{csquotes} % \enquote{...}
+
+% ---- Màu sắc ----------------------------------------------------------------
+\usepackage{xcolor}
+\definecolor{accent}{HTML}{1F4E79}
+\definecolor{accentlt}{HTML}{2E75B6}
+\definecolor{rulegray}{HTML}{C3CEDA}
+\definecolor{codebg}{HTML}{F6F8FA}
+\definecolor{codeframe}{HTML}{D9E1EA}
+\definecolor{cmt}{HTML}{6A737D}
+\definecolor{kw}{HTML}{0B5394}
+\definecolor{str}{HTML}{A31515}
+\definecolor{num}{HTML}{098658}
+\definecolor{noteblue}{HTML}{EAF2FB}
+\definecolor{qabg}{HTML}{F3EEFA}
+\definecolor{qarule}{HTML}{7E57C2}
+\definecolor{warnbg}{HTML}{FBF1E6}
+\definecolor{warnrule}{HTML}{D9822B}
+\definecolor{okbg}{HTML}{E8F5E9}
+\definecolor{okrule}{HTML}{2E7D32}
+
+% ---- Tiêu đề mục ------------------------------------------------------------
+\usepackage{titlesec}
+\titleformat{\section}{\Large\bfseries\color{accent}}{\thesection}{0.6em}{}
+\titleformat{\subsection}{\large\bfseries\color{accentlt}}{\thesubsection}{0.6em}{}
+\titleformat{\subsubsection}{\normalsize\bfseries\color{accentlt}}{\thesubsubsection}{0.5em}{}
+\titlespacing*{\section}{0pt}{1.4em}{0.6em}
+
+% ---- Danh sách --------------------------------------------------------------
+\usepackage{enumitem}
+\setlist[itemize]{leftmargin=1.4em,topsep=2pt,itemsep=2pt}
+\setlist[enumerate]{leftmargin=1.6em,topsep=2pt,itemsep=2pt}
+
+% ---- Bảng -------------------------------------------------------------------
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{colortbl}
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+
+% ---- Hộp callout (tcolorbox) ------------------------------------------------
+\usepackage[most]{tcolorbox}
+\newtcolorbox{notebox}{colback=noteblue,colframe=accentlt,boxrule=0pt,
+  leftrule=3pt,arc=2pt,left=8pt,right=8pt,top=5pt,bottom=5pt}
+\newtcolorbox{qabox}{colback=qabg,colframe=qarule,boxrule=0pt,
+  leftrule=3pt,arc=2pt,left=8pt,right=8pt,top=5pt,bottom=5pt}
+\newtcolorbox{warnbox}{colback=warnbg,colframe=warnrule,boxrule=0pt,
+  leftrule=3pt,arc=2pt,left=8pt,right=8pt,top=5pt,bottom=5pt}
+
+% ---- Mã nguồn (fvextra Verbatim — render đúng tiếng Việt dưới XeLaTeX) -------
+% Lưu ý: listings reorder/garble dấu tiếng Việt trong code, nên dùng fvextra.
+\usepackage{fvextra}
+\fvset{
+  numbers=left,
+  numbersep=8pt,
+  frame=single,
+  framesep=6pt,
+  rulecolor=\color{codeframe},
+  fontsize=\footnotesize,
+  breaklines=true,
+  breakanywhere=true,
+  breaksymbolleft={\footnotesize\color{cmt}\ensuremath{\hookrightarrow}},
+}
+% \code: định danh inline; underscore tự cho phép ngắt dòng (tránh tràn bảng).
+\newcommand{\code}[1]{{\ttfamily\small\def\_{\textunderscore\discretionary{}{}{}}#1}}
+
+% ---- Liên kết ---------------------------------------------------------------
+\usepackage{hyperref}
+\hypersetup{
+  colorlinks=true, linkcolor=accent, urlcolor=accentlt, citecolor=accent,
+  pdftitle={Phan cong code van dap - Nguyen Trong Phuc - X509Certificate},
+  pdfauthor={Nguyen Trong Phuc},
+}
+
+% ---- Header / footer --------------------------------------------------------
+\usepackage{fancyhdr}
+\pagestyle{fancy}\fancyhf{}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\footrulewidth}{0pt}
+\fancyhead[L]{\footnotesize\color{accent}X509Certificate — Phân công vấn đáp}
+\fancyhead[R]{\footnotesize\color{accent}Nguyễn Trọng Phúc}
+\fancyfoot[C]{\thepage}
+
+% ---- Hộp nhỏ dùng cho sơ đồ (thay cho TikZ, biên dịch ổn định) --------------
+\newcommand{\flowbox}[2]{\colorbox{#1}{\parbox{8.4cm}{\centering #2}}}
+\newcommand{\stepbox}[1]{\fcolorbox{accent}{codebg}{\footnotesize\strut #1}}
+
+\begin{document}
+
+%==============================================================================
+% TRANG BÌA
+%==============================================================================
+\begin{titlepage}
+\centering
+\vspace*{2.2cm}
+{\color{accent}\rule{\linewidth}{1.2pt}}\\[0.6cm]
+{\Huge\bfseries Phân công code vấn đáp đồ án}\\[0.35cm]
+{\Huge\bfseries\color{accent} X509Certificate}\\[0.5cm]
+{\Large Phần việc chi tiết của thành viên}\\[0.3cm]
+{\LARGE\bfseries Nguyễn Trọng Phúc}\\[0.45cm]
+{\large\itshape Lõi mật mã, Root CA\\ và Phát hành chứng chỉ}\\[0.5cm]
+{\color{accent}\rule{\linewidth}{1.2pt}}\\[1.4cm]
+
+\begin{minipage}{0.85\linewidth}
+\centering\small
+Tài liệu này mô tả chi tiết phần code, lý thuyết X.509 cần nắm, các test case
+và cách tích hợp cho phần việc \textbf{lõi mật mã + Root CA + phát hành cert},
+gắn trực tiếp với mã nguồn thực tế của đồ án trong các thư mục
+\code{src/core/} (\code{ca.py}, \code{cert\_builder.py}, \code{csr.py}),
+\code{src/services/} (\code{ca\_admin.py}, \code{csr\_admin.py},
+\code{csr\_workflow.py}, \code{customer\_keys.py}) và \code{src/ui/}.
+\end{minipage}
+
+\vfill
+{\large Môn: Mã hoá và Ứng dụng (MHUD)}\\[0.2cm]
+{\large Học phần đồ án X.509 Certificate}\\[0.6cm]
+{\small Ngày biên soạn: 14/06/2026}
+\end{titlepage}
+
+\tableofcontents
+\thispagestyle{fancy}
+\clearpage
+
+%==============================================================================
+\section{Mục tiêu và phạm vi phần việc}
+%==============================================================================
+
+Theo bảng phân công chung, thành viên \textbf{Nguyễn Trọng Phúc} phụ trách
+\textbf{lõi mật mã, Root CA và phát hành chứng chỉ}. Đây là phần \emph{đứng đầu}
+trong vòng đời chứng chỉ: nó tạo ra gốc tin cậy (Root CA self-signed), sinh cặp
+khóa cho khách hàng, đóng gói yêu cầu cấp chứng chỉ (CSR theo chuẩn PKCS\#10),
+và cuối cùng \textbf{phát hành} chứng chỉ X.509 v3 hợp lệ bằng cách dùng private
+key của Root CA để ký. Nói cách khác, cụm này \emph{sản xuất} ra mọi vật phẩm
+mật mã mà các cụm khác (kiểm tra chuỗi, thu hồi CRL \& OCSP) sẽ tiêu thụ về sau.
+
+Phạm vi gồm bốn trục chính:
+\begin{enumerate}
+  \item \textbf{Sinh khóa và chữ ký số} — RSA 2048/3072/4096, ký SHA-256 với
+        padding PKCS\#1 v1.5.
+  \item \textbf{Root CA} — tạo cert self-signed, mã hóa private key
+        \emph{encrypt-at-rest} (AES-256-GCM) trước khi lưu DB, rotate, publish
+        ra trust store.
+  \item \textbf{CSR (PKCS\#10)} — build/parse/verify; chứng minh quyền sở hữu
+        khóa (proof of possession).
+  \item \textbf{Phát hành cert} — duyệt CSR, build cert end-entity v3 với đầy đủ
+        extension (KeyUsage, EKU, SAN, CRLDP, AIA, SKI/AKI), ký bằng Root CA.
+\end{enumerate}
+
+\subsection{Ánh xạ khái niệm $\to$ file code $\to$ vai trò}
+
+\begin{table}[h]
+\centering\small
+\renewcommand{\arraystretch}{1.35}
+\begin{tabularx}{\linewidth}{L{4.4cm} L{4.4cm} X}
+\toprule
+\textbf{Khái niệm} & \textbf{File / hàm code} & \textbf{Vai trò} \\
+\midrule
+Sinh keypair RSA + tạo cert & \code{core/cert\_builder.py} & Hàm dựng cert X.509 v3, builder pattern của thư viện \code{cryptography}. \\
+Root CA self-signed (production) & \code{services/ca\_admin.py} \newline \code{\_generate\_root\_ca()} & Sinh Root CA, mã hóa key AES-GCM, lưu DB, rotate. \\
+Root CA self-signed (legacy/lab) & \code{core/ca.py} \newline \code{load\_or\_create\_issuer()} & Bản cũ lưu cert/key ra file + trust store. \\
+Sinh keypair khách hàng & \code{services/customer\_keys.py} \newline \code{generate\_keypair()} & RSA + encrypt-at-rest, AAD bind theo id, BOLA guard. \\
+CSR (PKCS\#10) & \code{core/csr.py} & \code{build\_csr} / \code{parse\_csr} / \code{verify\_csr\_signature}. \\
+Customer nộp CSR & \code{services/csr\_workflow.py} \newline \code{submit\_csr()} & Validate domain/wildcard, ký CSR, lưu pending. \\
+Duyệt và phát hành cert & \code{services/csr\_admin.py} \newline \code{approve\_csr()} & Verify CSR $\to$ load Root CA $\to$ build cert $\to$ ký. \\
+Tham số cấp phát & \code{services/system\_config.py} & key\_size / validity / algo / URL nhúng cert. \\
+UI sinh/rotate Root CA & \code{ui/admin/root\_ca\_view.py} & Màn hình quản lý Root CA. \\
+UI duyệt CSR $\to$ cấp cert & \code{ui/admin/csr\_queue\_view.py} & Queue duyệt, approve/reject. \\
+UI khách hàng & \code{ui/customer/my\_keys\_view.py} \newline \code{ui/customer/csr\_submit\_view.py} & Sinh keypair, gửi CSR. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{notebox}
+\textbf{Điểm cần nhớ khi mở bài:} cụm này là \emph{bên phát hành} (issuer side).
+Mọi thứ nó tạo ra đều có một chữ ký số làm gốc tin cậy: CSR được ký bằng khóa
+khách hàng (chứng minh sở hữu), cert được ký bằng khóa Root CA (chứng minh do CA
+phát hành), Root CA tự ký chính mình (vì nó là gốc, không có ai trên nó).
+\end{notebox}
+
+%==============================================================================
+\section{Kiến trúc tổng thể và vị trí của thành viên trong hệ thống}
+%==============================================================================
+
+Hệ thống dùng mô hình \textbf{Root CA + Trust Store} hai tầng: một Root CA
+self-signed ký trực tiếp các cert end-entity (không có intermediate CA), và
+client tin cậy cert nhờ có Root CA trong trust store. Cụm của thành viên nằm ở
+\emph{nửa trên} của vòng đời chứng chỉ.
+
+\subsection{Luồng phát hành chứng chỉ (sơ đồ)}
+
+\begin{center}
+\stepbox{(1) Admin: tạo Root CA self-signed \quad ca\_admin.create\_root\_ca} \\[3pt]
+$\downarrow$ \\[3pt]
+\stepbox{(2) Customer: sinh keypair RSA \quad customer\_keys.generate\_keypair} \\[3pt]
+$\downarrow$ \\[3pt]
+\stepbox{(3) Customer: tạo + ký CSR (PKCS\#10) \quad csr.build\_csr / csr\_workflow.submit\_csr} \\[3pt]
+$\downarrow$ \\[3pt]
+\stepbox{(4) Admin: verify CSR $\to$ load Root CA $\to$ ký cert \quad csr\_admin.approve\_csr} \\[3pt]
+$\downarrow$ \\[3pt]
+\stepbox{(5) Cert X.509 v3 phát hành \quad cert\_builder.issue\_cert\_from\_csr}
+\end{center}
+
+\subsection{Phân lớp module và quan hệ}
+
+\begin{table}[h]
+\centering\small
+\renewcommand{\arraystretch}{1.3}
+\begin{tabularx}{\linewidth}{L{2.6cm} L{4.6cm} X}
+\toprule
+\textbf{Tầng} & \textbf{Module} & \textbf{Trách nhiệm} \\
+\midrule
+UI & \code{root\_ca\_view}, \code{csr\_queue\_view}, \code{my\_keys\_view}, \code{csr\_submit\_view} & Thu thập input, gọi service, hiển thị kết quả, ghi audit. \\
+Service & \code{ca\_admin}, \code{csr\_admin}, \code{csr\_workflow}, \code{customer\_keys}, \code{system\_config} & Nghiệp vụ + giao dịch DB (atomic, BOLA guard, race-check). \\
+Core (mật mã) & \code{cert\_builder}, \code{csr}, \code{ca}, \code{encryption} & Thao tác mật mã thuần (sinh khóa, ký, build cert, AES-GCM). \\
+DB & \code{root\_ca}, \code{customer\_keys}, \code{csr\_requests}, \code{issued\_certs}, \code{system\_config} & Lưu trữ bền vững. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{notebox}
+\textbf{Quy tắc thiết kế:} tầng \code{core/} chỉ làm mật mã \emph{thuần}, không
+chạm DB; tầng \code{services/} ghép mật mã với DB trong transaction; tầng UI
+không bao giờ tự ký/giải mã mà luôn gọi xuống service. Nhờ vậy mỗi tầng test
+được độc lập.
+\end{notebox}
+
+%==============================================================================
+\section{Phần code cần làm (chi tiết)}
+%==============================================================================
+
+\subsection{Tạo Root CA self-signed (\code{ca\_admin.\_generate\_root\_ca})}
+
+Root CA là điểm neo tin cậy. Vì nó là gốc nên \emph{tự ký} chính mình:
+\code{subject == issuer}, và chữ ký được tạo bằng \emph{chính private key của
+nó}. Đây là điểm khác biệt cốt lõi so với cert end-entity (do Root CA ký).
+
+\begin{Verbatim}
+def _generate_root_ca(common_name, key_size, validity_days):
+    key = rsa.generate_private_key(public_exponent=65537, key_size=key_size)
+    # subject == issuer  → đặc trưng của cert self-signed
+    subject = issuer = x509.Name([
+        x509.NameAttribute(NameOID.COUNTRY_NAME,      "VN"),
+        x509.NameAttribute(NameOID.ORGANIZATION_NAME, "X509 Demo"),
+        x509.NameAttribute(NameOID.COMMON_NAME,       common_name),
+    ])
+    now = datetime.now(timezone.utc)
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(subject).issuer_name(issuer)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(minutes=1))
+        .not_valid_after(now + timedelta(days=validity_days))
+        # ... các extension bên dưới ...
+        .sign(key, hashes.SHA256())   # ← TỰ KÝ bằng chính khóa của nó
+    )
+    return cert, key
+\end{Verbatim}
+
+Hai extension định danh \enquote{đây là CA}:
+
+\begin{Verbatim}
+.add_extension(
+    x509.BasicConstraints(ca=True, path_length=0), critical=True,
+)
+.add_extension(
+    x509.KeyUsage(
+        digital_signature=True, key_cert_sign=True, crl_sign=True,
+        key_encipherment=False, content_commitment=False,
+        data_encipherment=False, key_agreement=False,
+        encipher_only=False, decipher_only=False,
+    ),
+    critical=True,
+)
+.add_extension(
+    x509.SubjectKeyIdentifier.from_public_key(key.public_key()),
+    critical=False,
+)
+\end{Verbatim}
+
+Giải thích từng ý:
+\begin{itemize}
+  \item \code{BasicConstraints(ca=True, path\_length=0)}: xác nhận đây là CA và
+        \code{path\_length=0} giới hạn chuỗi — Root CA chỉ được ký trực tiếp
+        end-entity cert, \emph{không} được ký thêm CA con (intermediate). Đặt
+        \code{critical=True} để client buộc phải hiểu và tuân thủ.
+  \item \code{KeyUsage}: bật \code{key\_cert\_sign} (được ký cert) và
+        \code{crl\_sign} (được ký CRL) — đúng hai vai trò của một CA. Tắt
+        \code{key\_encipherment} vì khóa CA không dùng để mã hóa dữ liệu.
+  \item \code{SubjectKeyIdentifier} (SKI): vân tay của public key Root CA; cert
+        con sẽ trỏ về SKI này qua \code{AuthorityKeyIdentifier} (AKI), giúp
+        client nối chuỗi nhanh và chính xác.
+\end{itemize}
+
+\subsection{Lưu Root CA encrypt-at-rest (\code{ca\_admin.create\_root\_ca})}
+
+Private key của Root CA là tài sản nhạy cảm nhất hệ thống — lộ nó là lộ toàn bộ
+tin cậy. Vì vậy nó được \textbf{mã hóa AES-256-GCM} trước khi ghi DB, và việc
+ghi diễn ra atomic: deactivate Root CA cũ rồi insert cái mới trong cùng một
+transaction.
+
+\begin{Verbatim}
+cert, key = _generate_root_ca(common_name, key_size, validity_days)
+cert_pem = cert.public_bytes(serialization.Encoding.PEM)
+key_pem  = _serialize_private_key_pem(key)   # PKCS8 PEM, không password
+
+# Encrypt-at-rest. AAD = b"root_ca" để bind ciphertext với loại record.
+nonce, ct = encrypt_blob(key_pem, aad=ROOT_CA_AAD)
+# ...
+with transaction(db_path) as conn:
+    conn.execute("UPDATE root_ca SET is_active = 0 WHERE is_active = 1")
+    cur = conn.execute(
+        "INSERT INTO root_ca (common_name, serial_hex, cert_pem, "
+        " encrypted_private_key, gcm_nonce, ..., is_active) "
+        "VALUES (?, ?, ?, ?, ?, ..., 1)",
+        (common_name, serial_hex, cert_pem, ct, nonce, ...),
+    )
+    new_id = cur.lastrowid
+\end{Verbatim}
+
+\begin{itemize}
+  \item \textbf{Tại sao mã hóa:} kể cả khi file DB bị copy ra ngoài, kẻ tấn công
+        cũng chỉ thấy ciphertext; không có master key thì không giải mã được
+        private key.
+  \item \textbf{AAD (Additional Authenticated Data) =} \code{b"root\_ca"}: dữ
+        liệu bổ trợ được \emph{xác thực} (không mã hóa) bởi GCM. Nếu ai đó lấy
+        ciphertext của Root CA rồi cố giải mã trong ngữ cảnh khác (AAD khác),
+        tag check sẽ thất bại. Nó \enquote{cột} ciphertext vào đúng loại bản ghi.
+  \item \textbf{Atomic:} \code{UPDATE ... is\_active=0} và \code{INSERT ...
+        is\_active=1} cùng một transaction $\to$ không bao giờ tồn tại trạng thái
+        không có hoặc có hai Root CA active.
+\end{itemize}
+
+\begin{warnbox}
+Khi \textbf{rotate} (sinh Root CA mới đè cái cũ), các cert đã phát hành vẫn mang
+chữ ký của Root CA \emph{cũ}. Client sẽ FAIL verify cho đến khi admin re-issue
+cert mới. UI có cảnh báo đỏ về điều này (xem \code{root\_ca\_view}).
+\end{warnbox}
+
+\subsection{Nạp Root CA để ký (\code{load\_active\_root\_ca\_with\_key})}
+
+Đây là hàm \emph{duy nhất} giải mã private key Root CA, chỉ gọi khi cần ký cert
+mới hoặc ký CRL.
+
+\begin{Verbatim}
+def load_active_root_ca_with_key(db_path):
+    with conn_scope(db_path) as conn:
+        row = conn.execute(
+            "SELECT cert_pem, encrypted_private_key, gcm_nonce "
+            "FROM root_ca WHERE is_active = 1 LIMIT 1"
+        ).fetchone()
+    if row is None:
+        raise CAError("Chưa có Root CA active. Admin cần tạo Root CA trước.")
+    cert = x509.load_pem_x509_certificate(row["cert_pem"])
+    key_pem = decrypt_blob(
+        row["gcm_nonce"], row["encrypted_private_key"], aad=ROOT_CA_AAD,
+    )
+    key = serialization.load_pem_private_key(key_pem, password=None)
+    return cert, key
+\end{Verbatim}
+
+Lưu ý AAD truyền vào \code{decrypt\_blob} phải đúng bằng AAD lúc encrypt
+(\code{ROOT\_CA\_AAD}), nếu không GCM tag check fail và raise lỗi — cơ chế chống
+nhầm/giả mạo ngữ cảnh.
+
+\subsection{Bản legacy core/ca.py (file \& trust store)}
+
+\code{core/ca.py} giữ đường legacy/lab: lưu cert/key Root CA ra \emph{file} thay
+vì DB, và publish ra trust store cho client. Hàm \code{load\_or\_create\_issuer}
+\enquote{load nếu có, sinh nếu chưa}. Vì là đường lab nên private key \emph{không}
+encrypt-at-rest; bù lại nó siết quyền file ở mức OS.
+
+\begin{Verbatim}
+def load_or_create_issuer(cert_path, key_path):
+    if os.path.exists(cert_path) and os.path.exists(key_path):
+        with open(key_path, "rb") as f:
+            key = serialization.load_pem_private_key(f.read(), password=None)
+        with open(cert_path, "rb") as f:
+            cert = x509.load_pem_x509_certificate(f.read())
+        return cert, key
+    # chưa có → sinh Root CA self-signed mới (subject == issuer)
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    # ... build cert + ghi file ...
+    _restrict_key_file_permissions(key_path)  # chmod 0600 / icacls
+    return cert, key
+
+def publish_root_ca_to_trust_store(root_ca_cert, trust_store_dir):
+    out_path = os.path.join(trust_store_dir, "root_ca.crt")
+    with open(out_path, "wb") as f:
+        f.write(root_ca_cert.public_bytes(serialization.Encoding.PEM))
+    return out_path
+\end{Verbatim}
+
+\begin{notebox}
+Phân biệt rõ khi vấn đáp: \code{ca\_admin.py} là đường \textbf{production} (DB +
+AES-GCM); \code{core/ca.py} là đường \textbf{legacy/lab} (file + trust store).
+Cả hai đều sinh Root CA self-signed với cùng bộ extension.
+\end{notebox}
+
+\subsection{Sinh keypair khách hàng (\code{customer\_keys.generate\_keypair})}
+
+Mỗi khách hàng có nhiều keypair RSA. Private key cũng \emph{encrypt-at-rest},
+nhưng AAD ở đây phụ thuộc \emph{id} của bản ghi — mà id chỉ biết sau khi INSERT.
+Giải pháp: insert placeholder để lấy id, rồi encrypt với AAD đúng và UPDATE lại,
+tất cả trong một transaction.
+
+\begin{Verbatim}
+def _aad_for(key_id):
+    return f"customer_keys:{key_id}".encode("ascii")
+
+def generate_keypair(owner_id, name, key_size, db_path):
+    # ... validate name + key_size ...
+    rsa_key  = rsa.generate_private_key(public_exponent=65537, key_size=key_size)
+    priv_pem = _serialize_private_pem(rsa_key)   # PKCS8 PEM
+    pub_pem  = _serialize_public_pem(rsa_key)
+    with transaction(db_path) as conn:
+        # 1) INSERT placeholder (ct/nonce rỗng) để lấy id
+        cur = conn.execute(
+            "INSERT INTO customer_keys (owner_id, name, algorithm, key_size, "
+            " public_key_pem, encrypted_private_key, gcm_nonce, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (owner_id, name, "RSA", key_size, pub_pem, b"", b"", now),
+        )
+        key_id = cur.lastrowid
+        # 2) Encrypt với AAD bind theo id  3) UPDATE ciphertext thật
+        nonce, ct = encrypt_blob(priv_pem, aad=_aad_for(key_id))
+        conn.execute(
+            "UPDATE customer_keys SET encrypted_private_key = ?, gcm_nonce = ? "
+            "WHERE id = ?", (ct, nonce, key_id),
+        )
+\end{Verbatim}
+
+\textbf{BOLA guard:} mọi hàm đọc khóa đều thêm \code{WHERE id=? AND owner\_id=?}.
+Service không tin caller có đúng quyền — luôn lọc theo chủ sở hữu để chống tham
+chiếu đối tượng chéo (Broken Object Level Authorization / IDOR).
+
+\begin{Verbatim}
+def load_private_key(key_id, owner_id, db_path):
+    row = conn.execute(
+        "SELECT encrypted_private_key, gcm_nonce FROM customer_keys "
+        "WHERE id = ? AND owner_id = ?", (key_id, owner_id),
+    ).fetchone()
+    if row is None:
+        raise CustomerKeyError(f"Không tìm thấy keypair id={key_id} thuộc về bạn.")
+    pem = decrypt_blob(row["gcm_nonce"], row["encrypted_private_key"],
+                       aad=_aad_for(key_id))
+    return serialization.load_pem_private_key(pem, password=None)
+\end{Verbatim}
+
+\subsection{Tạo CSR theo PKCS\#10 (\code{core/csr.build\_csr})}
+
+CSR (Certificate Signing Request) là gói \enquote{xin cấp chứng chỉ}: chứa
+subject, public key và SAN, được \emph{ký bằng private key chủ nhân}. Chữ ký này
+là bằng chứng \textbf{proof of possession} — chứng minh người xin thực sự nắm
+private key tương ứng với public key trong yêu cầu.
+
+\begin{Verbatim}
+def build_csr(private_key, common_name, san_list=None,
+              organization="X509 Demo", country="VN"):
+    common_name = common_name.strip()
+    san_values = list(san_list or [])
+    if common_name not in san_values:
+        san_values.insert(0, common_name)  # TLS hiện đại: CN phải nằm trong SAN
+    subject = x509.Name([
+        x509.NameAttribute(NameOID.COUNTRY_NAME,      country),
+        x509.NameAttribute(NameOID.ORGANIZATION_NAME, organization),
+        x509.NameAttribute(NameOID.COMMON_NAME,       common_name),
+    ])
+    builder = (
+        x509.CertificateSigningRequestBuilder()
+        .subject_name(subject)
+        .add_extension(
+            x509.SubjectAlternativeName(_build_san_list(san_values)),
+            critical=False,
+        )
+    )
+    return builder.sign(private_key, hashes.SHA256())  # ← ký = proof of possession
+\end{Verbatim}
+
+Phía duyệt CSR phải verify chữ ký trước khi cấp cert. Hàm verify dùng public key
+\emph{nằm trong chính CSR} để kiểm tra:
+
+\begin{Verbatim}
+def verify_csr_signature(csr):
+    if hasattr(csr, "is_signature_valid"):     # cryptography >= 40
+        return bool(csr.is_signature_valid)
+    try:                                        # fallback: verify thủ công
+        csr.public_key().verify(
+            csr.signature, csr.tbs_certrequest_bytes, *_verify_padding_args(csr),
+        )
+        return True
+    except InvalidSignature:
+        return False
+
+def _verify_padding_args(csr):
+    # RSA cần padding PKCS1v15 + hash; EC chỉ cần hash
+    if isinstance(csr.public_key(), rsa.RSAPublicKey):
+        return (padding.PKCS1v15(), csr.signature_hash_algorithm)
+    return (csr.signature_hash_algorithm,)
+\end{Verbatim}
+
+\subsection{Customer nộp CSR (\code{csr\_workflow.submit\_csr})}
+
+Service customer ghép \code{customer\_keys} với \code{core/csr}: kiểm tra quyền
+sở hữu key, validate tên miền (cho phép wildcard \code{*.}), tạo + ký CSR, lưu
+DB với \code{status='pending'}.
+
+\begin{Verbatim}
+def _validate_common_name(cn):
+    cn = (cn or "").strip()
+    if not cn:               raise CSRError("Common Name không được rỗng.")
+    if len(cn) > 253:        raise CSRError("Common Name dài quá 253 ký tự.")
+    name_to_check = cn[2:] if cn.startswith("*.") else cn   # wildcard '*.'
+    if not all(c.isalnum() or c in ".-" for c in name_to_check):
+        raise CSRError("Common Name chỉ chấp nhận chữ/số/dấu '.' '-' ...")
+    return cn
+
+def submit_csr(requester_id, customer_key_id, common_name, san_list, db_path):
+    common_name = _validate_common_name(common_name)
+    meta = get_key_meta(customer_key_id, requester_id, db_path)  # BOLA guard
+    if meta is None:
+        raise CSRError(f"Keypair id={customer_key_id} không thuộc về bạn ...")
+    key = load_private_key(customer_key_id, requester_id, db_path)
+    csr = build_csr(key, common_name=common_name, san_list=san_list)
+    csr_pem = csr_to_pem(csr)
+    with transaction(db_path) as conn:
+        cur = conn.execute(
+            "INSERT INTO csr_requests (requester_id, customer_key_id, "
+            " common_name, san_list_json, csr_pem, status, submitted_at) "
+            "VALUES (?, ?, ?, ?, ?, 'pending', ?)", (...),
+        )
+\end{Verbatim}
+
+\subsection{Phát hành cert (\code{csr\_admin.approve\_csr})}
+
+Đây là transaction trung tâm của cụm. Trình tự: (1) đọc CSR và kiểm tra
+\code{status=='pending'}; (2) parse + verify chữ ký CSR; (3) load Root CA active
+(giải mã key); (4) build + ký cert; (5) INSERT \code{issued\_certs} và UPDATE
+\code{csr\_requests} atomic, kèm re-check chống race.
+
+\begin{Verbatim}
+# Bước 2: parse + verify CSR (proof of possession)
+csr_pem = bytes(row["csr_pem"])
+csr_obj = parse_csr(csr_pem)
+if not verify_csr_signature(csr_obj):
+    raise CSRAdminError("Chữ ký CSR không hợp lệ — có thể bị sửa hoặc khớp "
+                        "sai keypair. Từ chối phát hành.")
+
+# Bước 3: load Root CA active (decrypt private key)
+ca_cert, ca_key = load_active_root_ca_with_key(db_path)
+
+# Bước 4: build + sign cert end-entity từ CSR
+cert, serial_number = issue_cert_from_csr(
+    csr_obj, ca_cert, ca_key, validity_days=validity_days,
+    ocsp_url=ocsp_url, crl_url=crl_url,
+)
+cert_pem = cert.public_bytes(serialization.Encoding.PEM)
+\end{Verbatim}
+
+\begin{Verbatim}
+# Bước 5: ghi DB atomic + re-check chống race
+with transaction(db_path) as conn:
+    cur_status = conn.execute(
+        "SELECT status FROM csr_requests WHERE id = ?", (csr_id,),
+    ).fetchone()
+    if cur_status is None or cur_status["status"] != "pending":
+        raise CSRAdminError("CSR đã được xử lý bởi admin khác. Hủy approve.")
+    conn.execute(
+        "INSERT INTO issued_certs (csr_request_id, owner_id, serial_hex, "
+        " common_name, cert_pem, not_valid_before, not_valid_after, "
+        " issued_at, issued_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", (...),
+    )
+    conn.execute(
+        "UPDATE csr_requests SET status = 'approved', reviewed_at = ?, "
+        " reviewed_by = ? WHERE id = ?", (now, admin_id, csr_id),
+    )
+\end{Verbatim}
+
+\begin{itemize}
+  \item \textbf{Verify trước, ký sau:} không bao giờ ký một CSR chưa được xác
+        thực chữ ký — nếu không, kẻ tấn công có thể sửa subject của CSR người
+        khác và xin cert giả.
+  \item \textbf{Re-check trong transaction:} dù đã kiểm tra \code{pending} ở
+        đầu, vẫn kiểm tra lại \emph{bên trong} transaction phòng trường hợp hai
+        admin approve cùng lúc (race) — chỉ một người thắng.
+  \item \textbf{Atomic INSERT+UPDATE:} cert và việc đổi trạng thái CSR phải cùng
+        commit; không thể có cert được cấp mà CSR vẫn \code{pending}.
+\end{itemize}
+
+\subsection{Builder cert v3 (\code{cert\_builder.\_build\_end\_entity\_cert})}
+
+Hàm internal dựng cert end-entity với bộ extension cố định của TLS server cert.
+Nó được dùng chung cho \code{issue\_cert\_from\_csr} (cấp mới) và
+\code{reissue\_cert\_for\_renewal} (gia hạn).
+
+\begin{Verbatim}
+builder = (
+    x509.CertificateBuilder()
+    .subject_name(subject_name)
+    .issuer_name(ca_cert.subject)          # issuer = Root CA (KHÁC subject)
+    .public_key(public_key)                # public key lấy từ CSR
+    .serial_number(x509.random_serial_number())
+    .not_valid_before(now - timedelta(minutes=1))
+    .not_valid_after(now + timedelta(days=validity_days))
+    .add_extension(x509.BasicConstraints(ca=False, path_length=None),
+                   critical=True)          # end-entity: KHÔNG phải CA
+    .add_extension(
+        x509.KeyUsage(digital_signature=True, key_encipherment=True,
+                      key_cert_sign=False, crl_sign=False, ...),
+        critical=True,
+    )
+    .add_extension(
+        x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]),
+        critical=False,                    # EKU = serverAuth (TLS server)
+    )
+)
+\end{Verbatim}
+
+\begin{Verbatim}
+builder = (
+    builder
+    .add_extension(x509.CRLDistributionPoints([                # CRLDP
+        x509.DistributionPoint(
+            full_name=[x509.UniformResourceIdentifier(crl_url)],
+            relative_name=None, reasons=None, crl_issuer=None)]),
+        critical=False)
+    .add_extension(x509.AuthorityInformationAccess([           # AIA / OCSP
+        x509.AccessDescription(
+            access_method=AuthorityInformationAccessOID.OCSP,
+            access_location=x509.UniformResourceIdentifier(ocsp_url))]),
+        critical=False)
+    .add_extension(                                             # SKI
+        x509.SubjectKeyIdentifier.from_public_key(public_key), critical=False)
+    .add_extension(                                             # AKI → Root CA
+        x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_cert.public_key()),
+        critical=False)
+)
+cert = builder.sign(private_key=ca_private_key, algorithm=hashes.SHA256())
+\end{Verbatim}
+
+So sánh nhanh cấu hình cert CA và end-entity:
+
+\begin{table}[h]
+\centering\small
+\renewcommand{\arraystretch}{1.3}
+\begin{tabularx}{\linewidth}{L{4.2cm} X X}
+\toprule
+\textbf{Extension} & \textbf{Root CA} & \textbf{End-entity (server)} \\
+\midrule
+BasicConstraints & \code{ca=True, path\_length=0} & \code{ca=False} \\
+KeyUsage & \code{key\_cert\_sign}, \code{crl\_sign} & \code{digital\_signature}, \code{key\_encipherment} \\
+ExtendedKeyUsage & (không) & \code{serverAuth} \\
+SAN & (không) & DNS/IP của domain \\
+issuer vs subject & bằng nhau (self-signed) & issuer = Root CA \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\code{issue\_cert\_from\_csr} chỉ là wrapper lấy subject, public key, SAN từ CSR
+rồi gọi \code{\_build\_end\_entity\_cert}; còn \code{reissue\_cert\_for\_renewal}
+giữ nguyên subject + public key của cert cũ (admin gia hạn mà không đụng private
+key của khách hàng). Hàm \code{tamper\_cert\_pem} lật một bit trong vùng chữ ký
+để demo cert bị sửa vẫn parse được nhưng verify thất bại.
+
+\subsection{Tham số cấp phát (\code{system\_config})}
+
+Các tham số mặc định (key size, validity, thuật toán, URL CRL \& OCSP) được lưu
+dạng key-value và nhúng vào cert lúc phát hành. \code{set\_config} chỉ chấp nhận
+key trong whitelist để chống typo/inject.
+
+\begin{Verbatim}
+DEFAULTS = {
+    "sig_algorithm":         "RSA-SHA256",
+    "hash_algorithm":        "SHA256",
+    "default_key_size":      "2048",
+    "default_validity_days": "365",
+    "root_ca_validity_days": "3650",
+    "prod_crl_url":          "http://localhost:8889/crl.pem",
+    "prod_ocsp_url":         "http://localhost:8888/ocsp",
+}
+ALLOWED_KEYS = frozenset(DEFAULTS.keys())  # whitelist chống inject
+\end{Verbatim}
+
+\subsection{Toàn cảnh nhà máy sinh cert --- \code{cert\_builder.py}}
+
+\begin{notebox}
+\code{cert\_builder.py} là \textbf{nhà máy} sinh \emph{mọi} certificate trong hệ
+thống. Phúc \emph{sở hữu} trọn file này; các cụm khác chỉ \emph{gọi vào} chứ
+không tự dựng cert. Bảng dưới liệt kê đủ các lối tạo cert để không sót hàm nào,
+kèm việc \emph{ai gọi} (làm rõ ranh giới với Kiệt-renew và Quân-Lab).
+\end{notebox}
+
+\begin{table}[h]
+\centering\footnotesize
+\renewcommand{\arraystretch}{1.3}
+\begin{tabularx}{\linewidth}{L{5.0cm} X L{2.6cm}}
+\toprule
+\textbf{Hàm} & \textbf{Tạo ra gì} & \textbf{Ai gọi} \\
+\midrule
+\code{generate\_rsa\_keypair} & Cặp khóa RSA (chưa phải cert) & submit\_csr\_lan, Lab (Quân) \\
+\code{issue\_cert\_from\_csr} $\to$ \code{\_build\_end\_entity\_cert} & Cert end-entity \emph{từ CSR} (luồng chính) & \code{approve\_csr} (Phúc) \\
+\code{create\_server\_cert\_signed\_by\_ca} & Cert server do Root CA ký \emph{trực tiếp}, không qua CSR & Verification Lab (Quân) \\
+\code{reissue\_cert\_for\_renewal} & Cấp lại cert giữ nguyên subject $+$ public key & \code{renew\_cert} (Kiệt) \\
+\code{create\_self\_signed\_cert} & Cert tự ký (issuer $=$ subject) --- đường legacy/test & code legacy \\
+\code{tamper\_cert\_pem} & Lật 1 bit chữ ký để demo cert giả mạo & Verification Lab (Quân) \\
+\code{save\_cert\_and\_key} / \code{save\_cert} / \code{load\_cert} / \code{load\_private\_key} & I/O cert/key ra/từ file PEM & nhiều nơi \\
+\bottomrule
+\end{tabularx}
+\caption{Mọi lối tạo cert đều nằm trong \code{cert\_builder.py} (Phúc sở hữu).}
+\end{table}
+
+\textbf{Điểm chung và khác nhau.} Tất cả hàm trên đều dùng cùng một
+\code{x509.CertificateBuilder()} (builder pattern). Khác nhau ở hai chỗ:
+\begin{itemize}
+  \item \emph{Ai là issuer}: \code{create\_self\_signed\_cert} và Root CA dùng
+        \code{issuer == subject} (tự ký); còn \code{create\_server\_cert\_signed\_by\_ca},
+        \code{issue\_cert\_from\_csr}, \code{reissue\_cert\_for\_renewal} dùng
+        \code{issuer = ca\_cert.subject} và ký bằng \emph{private key của Root CA}.
+  \item \emph{Bộ extension}: cert server/end-entity có \code{BasicConstraints(ca=False)},
+        \code{KeyUsage} (digitalSignature, keyEncipherment), \code{ExtendedKeyUsage}
+        serverAuth, SAN, CRLDP, AIA, SKI/AKI; còn Root CA có \code{ca=True},
+        \code{keyCertSign}, \code{crlSign}.
+\end{itemize}
+
+Trích hàm tạo server cert do Root CA ký trực tiếp (lối Verification Lab dùng):
+
+\begin{Verbatim}
+def create_server_cert_signed_by_ca(server_private_key, ca_cert, ca_private_key,
+                                    common_name="localhost", dns_names=None,
+                                    validity_days=365, expired=False):
+    issuer = ca_cert.subject                       # issuer = Root CA (KHÔNG self-signed)
+    # ... builder: subject = CN; BasicConstraints(ca=False);
+    #     KeyUsage(digital_signature, key_encipherment); EKU serverAuth;
+    #     SAN; CRLDistributionPoints; AIA/OCSP; SKI/AKI ...
+    certificate = builder.sign(private_key=ca_private_key,   # ← Root CA ký
+                               algorithm=hashes.SHA256())
+    return certificate, serial_number
+\end{Verbatim}
+
+\begin{notebox}
+\textbf{Vì sao có hai lối tạo server cert?} \code{issue\_cert\_from\_csr} dùng cho
+luồng \emph{thật} (khách gửi CSR, admin duyệt --- public key đến \emph{từ CSR}).
+\code{create\_server\_cert\_signed\_by\_ca} dùng cho \emph{Verification Lab}
+(Quân) cần sinh nhanh nhiều cert mẫu với cả keypair do Lab tự tạo. Cả hai cùng
+cho ra cert end-entity hợp lệ do Root CA ký --- chỉ khác nguồn gốc của public key.
+\end{notebox}
+
+\subsection{Lớp UI của cụm}
+
+\begin{itemize}
+  \item \code{root\_ca\_view.py}: hiển thị Root CA active + lịch sử; nút
+        \enquote{Sinh Root CA} / \enquote{rotate} / \enquote{Publish ra Trust
+        Store}. Modal có cảnh báo đỏ khi rotate.
+  \item \code{csr\_queue\_view.py}: queue duyệt CSR; \code{ApproveCSRDialog} gọi
+        \code{approve\_csr} và ghi hai audit (\code{CSR\_APPROVED} +
+        \code{CERT\_ISSUED}); \code{RejectCSRDialog} bắt buộc nhập lý do.
+  \item \code{system\_config\_view.py}: form 5 trường, validate int, ghi audit
+        các thay đổi.
+  \item \code{my\_keys\_view.py}: sinh/xem/xóa keypair (xóa bị từ chối nếu key
+        đang được CSR tham chiếu).
+  \item \code{csr\_submit\_view.py}: chọn keypair, nhập CN + SAN, submit CSR
+        (offline qua DB hoặc remote qua LAN tới máy Admin).
+\end{itemize}
+
+%==============================================================================
+\section{Cần nắm để vấn đáp}
+%==============================================================================
+
+\begin{qabox}
+\textbf{Hỏi:} Chữ ký số RSA hoạt động thế nào trong đồ án? Vì sao dùng padding
+PKCS\#1 v1.5?\\[2pt]
+\textbf{Đáp:} Ký = băm dữ liệu bằng SHA-256, rồi dùng private key \enquote{mã
+hóa} (toán RSA) lên giá trị băm đã đệm (padding). Verify = dùng public key giải
+ra giá trị băm, băm lại dữ liệu và so sánh. Đồ án dùng padding \code{PKCS1v15}
+(thấy trong \code{\_verify\_padding\_args}) vì đây là sơ đồ chuẩn, tương thích
+rộng và đủ cho mục tiêu học thuật; PSS hiện đại hơn nhưng PKCS1v15 đơn giản, dễ
+giải thích. EC thì không cần padding, chỉ cần hash.
+\end{qabox}
+
+\begin{qabox}
+\textbf{Hỏi:} Root CA là self-signed — vì sao nó tự ký được và điều đó có an
+toàn không?\\[2pt]
+\textbf{Đáp:} Root CA là \emph{gốc} của cây tin cậy, không có ai \enquote{trên}
+nó để ký, nên nó tự ký: \code{subject == issuer} và chữ ký tạo bằng \emph{chính}
+private key của nó (\code{.sign(key, SHA256())}). Bản thân việc self-signed
+không tạo tin cậy — tin cậy đến từ việc cert đó được đặt vào \textbf{trust
+store} của client. Client tin Root CA vì \enquote{quyết định} tin, không phải vì
+chữ ký. An toàn nằm ở chỗ private key Root CA được bảo vệ (encrypt-at-rest) và
+trust store được phân phối an toàn.
+\end{qabox}
+
+\begin{qabox}
+\textbf{Hỏi:} CSR theo PKCS\#10 chứa gì? Proof of possession là gì và chống được
+tấn công nào?\\[2pt]
+\textbf{Đáp:} CSR chứa subject (CN, O, C), public key, SAN, và một \emph{chữ
+ký} được tạo bằng private key chủ nhân lên toàn bộ phần TBS. Verify chữ ký bằng
+chính public key trong CSR chính là \textbf{proof of possession} — chứng minh
+người gửi thực sự sở hữu private key. Nó chống tấn công \enquote{xin cert cho
+khóa không phải của mình}: nếu kẻ xấu lấy public key người khác và cố xin cert,
+hắn không thể tạo chữ ký hợp lệ vì không có private key tương ứng.
+\end{qabox}
+
+\begin{qabox}
+\textbf{Hỏi:} Khi cấp cert, các extension BasicConstraints / KeyUsage / EKU đặt
+thế nào và vì sao?\\[2pt]
+\textbf{Đáp:} Cert end-entity đặt \code{BasicConstraints(ca=False)} (không được
+ký cert khác), \code{KeyUsage} bật \code{digital\_signature} +
+\code{key\_encipherment} (đúng vai trò TLS), tắt \code{key\_cert\_sign}; và
+\code{ExtendedKeyUsage = serverAuth} để khai báo \enquote{dùng làm cert server
+TLS}. Ngược lại Root CA đặt \code{ca=True, path\_length=0} và bật
+\code{key\_cert\_sign} + \code{crl\_sign}. Đặt critical cho BasicConstraints và
+KeyUsage để client buộc phải tuân thủ.
+\end{qabox}
+
+\begin{qabox}
+\textbf{Hỏi:} Vì sao phải encrypt-at-rest private key của CA? AAD dùng để làm
+gì?\\[2pt]
+\textbf{Đáp:} Vì nếu file DB bị lộ, private key plaintext sẽ cho phép kẻ tấn
+công ký cert giả mạo bất kỳ — phá vỡ toàn bộ tin cậy. Mã hóa AES-256-GCM đảm bảo
+chỉ ai có master key mới giải được. AAD (Additional Authenticated Data) là dữ
+liệu được \emph{xác thực nhưng không mã hóa}; với Root CA dùng \code{b"root\_ca"},
+với customer key dùng \code{b"customer\_keys:\{id\}"}. AAD \enquote{cột}
+ciphertext vào đúng ngữ cảnh: nếu lấy ciphertext giải mã ở ngữ cảnh khác (AAD
+khác hoặc id khác), GCM tag check thất bại $\to$ chống đổi chỗ/nhầm bản ghi.
+\end{qabox}
+
+\begin{qabox}
+\textbf{Hỏi:} Proof of possession chống được gì cụ thể trong luồng cấp cert?\\[2pt]
+\textbf{Đáp:} Nó chống việc cấp cert cho một public key mà người xin không nắm
+private key — tức ngăn \enquote{cướp danh tính khóa}. Trong \code{approve\_csr},
+nếu \code{verify\_csr\_signature} trả về False (CSR bị sửa subject/SAN, hoặc chữ
+ký không khớp public key trong CSR), admin từ chối phát hành ngay. Nhờ vậy cert
+chỉ được cấp cho đúng chủ thực sự của cặp khóa.
+\end{qabox}
+
+\begin{qabox}
+\textbf{Hỏi:} Chuỗi renew (gia hạn) cert diễn ra thế nào? Admin có cần private
+key của khách hàng không?\\[2pt]
+\textbf{Đáp:} Gia hạn dùng \code{reissue\_cert\_for\_renewal}: nó giữ
+\emph{nguyên} subject và public key của cert cũ, chỉ kéo dài thời hạn và sinh
+serial mới, rồi ký lại bằng Root CA \emph{đang active}. Admin \textbf{không} cần
+và không có private key của khách hàng — chỉ cần public key (đã nằm trong cert
+cũ). Đây là lý do tách \code{\_build\_end\_entity\_cert} dùng chung cho cả cấp
+mới lẫn gia hạn.
+\end{qabox}
+
+\begin{qabox}
+\textbf{Hỏi:} SKI và AKI để làm gì trong cert?\\[2pt]
+\textbf{Đáp:} SubjectKeyIdentifier (SKI) là vân tay của public key chủ thể;
+AuthorityKeyIdentifier (AKI) là vân tay của public key bên ký (Root CA). Khi
+client dựng chuỗi, nó khớp AKI của cert con với SKI của cert cha để nối nhanh và
+chính xác, kể cả khi có nhiều CA cùng tên.
+\end{qabox}
+
+%==============================================================================
+\section{Test case và demo}
+%==============================================================================
+
+\subsection{Bảng test case chính}
+
+\begin{table}[h]
+\centering\small
+\renewcommand{\arraystretch}{1.3}
+\begin{tabularx}{\linewidth}{L{4.6cm} X L{3.0cm}}
+\toprule
+\textbf{Tình huống} & \textbf{Kỳ vọng} & \textbf{File test} \\
+\midrule
+Tạo Root CA lần đầu & \code{is\_active=1}, cert PEM parse được, subject chứa CN & \code{test\_m4\_ca\_admin} \\
+Private key không lưu raw vào DB & DB chỉ chứa ciphertext + nonce; decrypt mới ra key & \code{test\_m4\_ca\_admin} \\
+Rotate Root CA & Root CA cũ \code{is\_active=0}, cái mới \code{=1} & \code{test\_m4\_ca\_admin} \\
+Approve CSR happy path & cert ký bởi Root CA, public key khớp CSR & \code{test\_m6\_csr\_admin} \\
+Approve khi chưa có Root CA & raise lỗi & \code{test\_m6\_csr\_admin} \\
+CSR bị sửa chữ ký & verify fail $\to$ từ chối cấp & \code{test\_m6\_csr\_admin} \\
+Race 2 admin approve & 1 thắng, 1 fail & \code{test\_m6\_csr\_admin} \\
+SAN từ CSR sang cert & cert giữ đúng SAN & \code{test\_m6\_csr\_admin} \\
+Sinh keypair + load lại & decrypt đúng key; BOLA: owner khác load fail & \code{test\_m5\_customer} \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{Đoạn unit test gợi ý}
+
+\begin{Verbatim}
+def test_approve_csr_happy_path():
+    env = TestEnv(with_root_ca=True)        # đã tạo Root CA trong setup
+    csr_id = env.make_csr("demo.com", san_list=["www.demo.com"])
+    issued = approve_csr(csr_id, env.admin_id, validity_days=365,
+                         db_path=env.db_path)
+    detail = get_csr_detail(csr_id, env.db_path)
+    assert detail["status"] == "approved"
+    # issuer của cert = subject của Root CA active
+    ca_cert, _ = load_active_root_ca_with_key(env.db_path)
+    cert = x509.load_pem_x509_certificate(<cert_pem từ issued_certs>)
+    assert cert.issuer == ca_cert.subject
+    # chữ ký cert verify được bằng public key Root CA
+    ca_cert.public_key().verify(
+        cert.signature, cert.tbs_certificate_bytes,
+        padding.PKCS1v15(), cert.signature_hash_algorithm,
+    )
+
+def test_tampered_csr_rejected():
+    env = TestEnv(with_root_ca=True)
+    csr_id = env.make_csr("demo.com")
+    # giả lập sửa CSR PEM trong DB → verify_csr_signature phải fail
+    # → approve_csr raise CSRAdminError
+\end{Verbatim}
+
+\subsection{Lệnh chạy test}
+
+\begin{Verbatim}
+# Chạy từng module test của cụm
+python tests/test_m4_ca_admin.py     # Root CA admin
+python tests/test_m6_csr_admin.py    # duyệt CSR + phát hành cert
+python tests/test_m5_customer.py     # keypair + CSR phía customer
+\end{Verbatim}
+
+\subsection{Kịch bản demo end-to-end}
+
+\begin{enumerate}
+  \item Admin mở \code{root\_ca\_view} $\to$ \enquote{Sinh Root CA} (RSA-2048,
+        3650 ngày) $\to$ Publish ra Trust Store.
+  \item Customer mở \code{my\_keys\_view} $\to$ \enquote{Sinh keypair mới}
+        (RSA-2048).
+  \item Customer mở \code{csr\_submit\_view} $\to$ chọn keypair, nhập
+        \code{example.com} + SAN $\to$ Submit CSR (status \code{pending}).
+  \item Admin mở \code{csr\_queue\_view} $\to$ chọn CSR $\to$ \enquote{Xem chi
+        tiết} (CSR PEM) $\to$ \enquote{Approve} (365 ngày) $\to$ cert được phát
+        hành, status chuyển \code{approved}.
+  \item (Tùy chọn) Dùng \code{tamper\_cert\_pem} để minh họa cert bị sửa $\to$
+        cụm kiểm tra chuỗi sẽ FAIL verify.
+\end{enumerate}
+
+%==============================================================================
+\section{Tích hợp vào chương trình chung}
+%==============================================================================
+
+Cụm này là \emph{nhà sản xuất} cho phần còn lại của hệ thống. Quan hệ gọi/ghép
+như sau:
+
+\begin{itemize}
+  \item \textbf{UI $\to$ Service:} \code{root\_ca\_view} gọi \code{create\_root\_ca},
+        \code{publish\_active\_to\_trust\_store}; \code{csr\_queue\_view} gọi
+        \code{approve\_csr} / \code{reject\_csr}; \code{csr\_submit\_view} gọi
+        \code{submit\_csr}; \code{my\_keys\_view} gọi \code{generate\_keypair}.
+  \item \textbf{Service $\to$ Core:} \code{csr\_admin.approve\_csr} ghép ba mảnh:
+        \code{core/csr.verify\_csr\_signature},
+        \code{ca\_admin.load\_active\_root\_ca\_with\_key} và
+        \code{cert\_builder.issue\_cert\_from\_csr}.
+  \item \textbf{Service $\to$ Config:} validity/URL CRL \& OCSP lấy từ
+        \code{system\_config} để nhúng vào cert; URL còn fallback về
+        \code{infra\_manager} để tự khớp port runtime.
+  \item \textbf{Đầu ra cho cụm khác:} cert trong \code{issued\_certs} và Root CA
+        trong trust store là input cho cụm \textbf{kiểm tra chuỗi}
+        (\code{core/verify.py}); serial của cert là input cho cụm \textbf{thu
+        hồi CRL \& OCSP}.
+  \item \textbf{Audit:} mọi hành động nhạy cảm (tạo/rotate Root CA, approve/reject
+        CSR, cấp cert, sinh keypair, đổi config) đều ghi log qua
+        \code{services.audit.write\_audit}.
+\end{itemize}
+
+\begin{notebox}
+Sợi chỉ xuyên suốt: \textbf{một chữ ký số ở mỗi mắt xích}. CSR mang chữ ký khách
+hàng (proof of possession) $\to$ cert mang chữ ký Root CA (chứng thực) $\to$ Root
+CA tự ký (gốc tin cậy). Nắm sợi chỉ này là nắm cả cụm.
+\end{notebox}
+
+%==============================================================================
+\section{Bổ sung sau rà soát: các hàm/feature dễ bị hỏi}
+
+\subsection{Nộp CSR qua LAN \& khái niệm khóa ``public-only''}
+
+\begin{warnbox}
+Câu hỏi điển hình: \emph{``Nộp CSR từ máy khác thì private key có bị gửi đi không?''}
+--- KHÔNG. Ở chế độ \textbf{remote (LAN)}: client \code{build\_csr} \emph{tại máy
+mình}, chỉ gửi \emph{CSR PEM} $+$ username/password tới Admin API. Máy Admin lưu
+thành keypair \textbf{``public-only''} (cột \code{encrypted\_private\_key} rỗng).
+\end{warnbox}
+
+\begin{itemize}
+  \item Hai chế độ submit: \emph{offline} (\code{submit\_csr} ghi thẳng DB, key nằm
+        trong DB cùng máy) vs \emph{remote LAN} (key ở lại client).
+  \item Hệ quả cờ \textbf{\code{is\_public\_only}}: \code{list\_keys}/\code{get\_key\_meta}
+        gắn cờ này; \code{load\_private\_key} sẽ \emph{raise} với key public-only
+        (``private key nằm trên máy client gốc'') --- không thể ký bằng key không có.
+\end{itemize}
+
+\subsection{Các hàm CSR/CA/cấu hình còn lại}
+
+\begin{itemize}
+  \item \textbf{\code{cancel\_csr} (customer tự hủy).} Chỉ hủy được CSR \code{pending};
+        thực chất set \code{status='rejected'}, \code{reason='cancelled by requester'}
+        (giữ lịch sử thay vì xóa cứng), có guard \code{WHERE requester\_id=?}; bị
+        chặn ở chế độ remote (CSR nằm trên máy Admin).
+  \item \textbf{\code{list\_my\_csr} / \code{get\_my\_csr\_by\_id} (BOLA).} Customer chỉ
+        thấy CSR của mình (lọc \code{requester\_id}) --- đối lập với
+        \code{list\_all\_csr}/\code{get\_csr\_detail} của admin (xem MỌI CSR vì là
+        quyền quản trị).
+  \item \textbf{\code{get\_active\_root\_ca} vs \code{load\_active\_root\_ca\_with\_key}.}
+        \code{get\_active\_root\_ca} chỉ đọc metadata$+$\code{cert\_pem},
+        \emph{KHÔNG} giải mã private key (giảm bề mặt lộ khóa); chỉ
+        \code{load\_active\_root\_ca\_with\_key} mới decrypt --- và chỉ khi cần
+        \emph{ký}. \code{list\_root\_ca\_history} liệt kê CA active$+$retired cho bảng
+        lịch sử rotate.
+  \item \textbf{Đọc cấu hình.} \code{get\_config}/\code{get\_all\_config} đọc giá trị;
+        \code{get\_int\_config} có \emph{fallback} an toàn khi thiếu/parse lỗi;
+        \code{seed\_defaults} idempotent lúc init DB. UI lấy default key\_size/validity
+        qua \code{get\_int\_config}; \code{csr\_admin.\_default\_crl\_url}/\code{\_default\_ocsp\_url}
+        ưu tiên config rồi fallback \code{infra\_manager}.
+  \item \textbf{Trích thông tin CSR \& trust store.} \code{get\_csr\_common\_name}
+        (CN, trả '' nếu trống) và \code{get\_csr\_san\_dns} (list DNS-SAN, rỗng nếu
+        thiếu) --- dùng hiển thị/đối chiếu khi duyệt. \code{ca.load\_trust\_store}
+        đọc mọi \code{.crt}/\code{.pem} trong trust store (bỏ qua file PEM hỏng thay
+        vì crash), thiết kế list để mở rộng nhiều Root CA --- là đầu vào cho cụm verify.
+\end{itemize}
+
+%==============================================================================
+\section{Checklist chuẩn bị vấn đáp}
+%==============================================================================
+
+\begin{itemize}
+  \item[\textbf{$\square$}] Giải thích được tại sao Root CA self-signed
+        (\code{subject==issuer}, tự ký bằng khóa của nó) và tin cậy đến từ trust
+        store.
+  \item[\textbf{$\square$}] Đọc trôi bộ extension Root CA: \code{BasicConstraints
+        (ca=True, path\_length=0)}, \code{KeyUsage(key\_cert\_sign, crl\_sign)},
+        SKI.
+  \item[\textbf{$\square$}] Phân biệt cert CA và end-entity qua bảng so sánh
+        extension (BasicConstraints, KeyUsage, EKU, SAN).
+  \item[\textbf{$\square$}] Trình bày proof of possession: CSR ký bằng khóa chủ,
+        admin verify trước khi cấp.
+  \item[\textbf{$\square$}] Giải thích encrypt-at-rest (AES-256-GCM) và vai trò
+        của AAD (\code{root\_ca} / \code{customer\_keys:\{id\}}).
+  \item[\textbf{$\square$}] Mô tả 5 bước của \code{approve\_csr} và lý do
+        verify-trước-ký-sau + re-check chống race + atomic.
+  \item[\textbf{$\square$}] Nói được BOLA guard: luôn \code{WHERE owner\_id=?}.
+  \item[\textbf{$\square$}] Giải thích chữ ký RSA + padding PKCS\#1 v1.5 +
+        SHA-256.
+  \item[\textbf{$\square$}] Trình bày chuỗi renew dùng
+        \code{reissue\_cert\_for\_renewal} (giữ public key, admin không cần
+        private key khách hàng).
+  \item[\textbf{$\square$}] Cảnh báo rotate Root CA làm cert cũ FAIL verify đến
+        khi re-issue.
+  \item[\textbf{$\square$}] Chạy được 3 file test (\code{m4}, \code{m6},
+        \code{m5}) và demo end-to-end tạo Root CA $\to$ cấp cert.
+\end{itemize}
+
+\end{document}

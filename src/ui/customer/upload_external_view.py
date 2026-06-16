@@ -20,15 +20,14 @@ import os
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
-from ui.theme import font
-from ui.widgets.modal import fit_to_content
+from ui.theme import font, COLOR
 from services.audit import write_audit, Action
 from services.ca_admin import publish_active_to_trust_store
 from services.external_certs import (
     save_external_cert, list_external_certs, get_external_cert,
     delete_external_cert, parse_cert_summary, ExternalCertError,
 )
-from ui.common import CertDetailDialog
+from ui.common import CertDetailDialog, fmt_local
 
 
 from config import TRUST_STORE_DIR
@@ -64,9 +63,9 @@ class UploadExternalFrame(ttk.Frame):
     def _build_upload_tab(self, parent: tk.Misc) -> ttk.Frame:
         frame = ttk.Frame(parent, padding=12)
 
-        # Input area
+        # Input header (TOP)
         top = ttk.Frame(frame)
-        top.pack(fill=tk.X)
+        top.pack(side=tk.TOP, fill=tk.X)
         ttk.Button(
             top, text="📂 Browse file…", command=self._browse_file,
         ).pack(side=tk.LEFT)
@@ -75,32 +74,41 @@ class UploadExternalFrame(ttk.Frame):
             foreground="#666",
         ).pack(side=tk.LEFT, padx=(12, 0))
 
-        self.pem_text = tk.Text(
-            frame, height=14, font=font("mono"), wrap=tk.NONE,
+        # Preview panel + action/notes rows được pack ở ĐÁY (side=BOTTOM) để
+        # luôn dành sẵn chỗ — pem_text (expand) fill phần giữa. Trước đây preview
+        # bị đẩy xuống dưới fold do pem_text expand chiếm hết chiều cao.
+        self.preview_box = ttk.LabelFrame(
+            frame, text="Xem trước (preview)", padding=10,
         )
-        self.pem_text.pack(fill=tk.BOTH, expand=True, pady=(6, 6))
-
-        # Notes + actions
-        notes_row = ttk.Frame(frame)
-        notes_row.pack(fill=tk.X)
-        ttk.Label(notes_row, text="Ghi chú:").pack(side=tk.LEFT, padx=(0, 4))
-        self.notes_entry = ttk.Entry(notes_row, width=50)
-        self.notes_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.preview_box.pack(side=tk.BOTTOM, fill=tk.X, pady=(10, 0))
+        self.preview_label = ttk.Label(
+            self.preview_box, text="(chưa có — bấm Preview để xem)",
+            foreground="#888", font=font("mono"), justify=tk.LEFT,
+        )
+        self.preview_label.pack(anchor="w", fill=tk.X)
 
         action_row = ttk.Frame(frame)
-        action_row.pack(fill=tk.X, pady=(8, 0))
-        ttk.Button(action_row, text="Preview",
-                   command=self._on_preview).pack(side=tk.LEFT)
+        action_row.pack(side=tk.BOTTOM, fill=tk.X, pady=(8, 0))
+        ttk.Button(action_row, text="📋 Xem chi tiết cert",
+                   command=self._on_view_detail).pack(side=tk.LEFT)
         ttk.Button(action_row, text="💾 Upload + Lưu",
                    command=self._on_upload).pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(action_row, text="Clear",
                    command=self._on_clear).pack(side=tk.LEFT, padx=(8, 0))
 
-        self.preview_label = ttk.Label(
-            frame, text="", foreground="#444",
-            font=font("mono"), justify=tk.LEFT,
+        notes_row = ttk.Frame(frame)
+        notes_row.pack(side=tk.BOTTOM, fill=tk.X, pady=(6, 0))
+        ttk.Label(notes_row, text="Ghi chú:").pack(side=tk.LEFT, padx=(0, 4))
+        self.notes_entry = ttk.Entry(notes_row, width=50)
+        self.notes_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        # PEM input — fill phần giữa còn lại
+        self.pem_text = tk.Text(
+            frame, height=12, font=font("mono"), wrap=tk.NONE,
         )
-        self.preview_label.pack(anchor="w", pady=(8, 0))
+        self.pem_text.pack(side=tk.TOP, fill=tk.BOTH, expand=True, pady=(6, 0))
+        # Tự động preview khi rời ô nhập (cả browse lẫn paste) — không cần nút.
+        self.pem_text.bind("<FocusOut>", lambda e: self._auto_preview())
         return frame
 
     def _browse_file(self) -> None:
@@ -145,7 +153,19 @@ class UploadExternalFrame(ttk.Frame):
             return None
         return content.encode("ascii", errors="replace")
 
-    def _on_preview(self) -> None:
+    def _auto_preview(self) -> None:
+        """Tự động preview khi rời ô PEM — im lặng nếu chưa parse được."""
+        content = self.pem_text.get("1.0", tk.END).strip()
+        if not content:
+            return
+        try:
+            summary = parse_cert_summary(content.encode("ascii", errors="replace"))
+        except ExternalCertError:
+            return
+        self._show_preview(summary)
+
+    def _on_view_detail(self) -> None:
+        """Mở CertDetailDialog (decode đầy đủ) cho cert đang nhập trong ô PEM."""
         data = self._get_pem_bytes()
         if data is None:
             return
@@ -155,13 +175,31 @@ class UploadExternalFrame(ttk.Frame):
             messagebox.showerror("Lỗi parse", str(e))
             return
         self._show_preview(summary)
+        cn = next(
+            (p.split("=", 1)[1] for p in summary["subject"].split(",")
+             if p.strip().upper().startswith("CN=")),
+            summary["subject"],
+        )
+        CertDetailDialog(self, {
+            "id":               "—",
+            "serial_hex":       summary["serial_hex"],
+            "common_name":      cn,
+            "cert_pem":         data,
+            "not_valid_before": summary["not_valid_before"],
+            "not_valid_after":  summary["not_valid_after"],
+            "issued_at":        None,
+            "status":           "external",
+            "owner_username":   self.app.session["username"],
+            "renewed_from_id":  None,
+            "revoked_at":       None,
+        })
 
     def _show_preview(self, s: dict) -> None:
-        self.preview_label.config(text=(
+        self.preview_label.config(foreground="#333", text=(
             f"Subject:     {s['subject']}\n"
             f"Issuer:      {s['issuer']}\n"
             f"Serial:      {s['serial_hex']}\n"
-            f"Valid:       {s['not_valid_before']} → {s['not_valid_after']}\n"
+            f"Valid:       {fmt_local(s['not_valid_before'])} → {fmt_local(s['not_valid_after'])}\n"
             f"SAN (DNS):   {', '.join(s['san_dns']) or '—'}\n"
             f"Public key:  {s['public_key']}\n"
             f"Fingerprint: {s['fingerprint_sha256']}"
@@ -199,7 +237,9 @@ class UploadExternalFrame(ttk.Frame):
     def _on_clear(self) -> None:
         self.pem_text.delete("1.0", tk.END)
         self.notes_entry.delete(0, tk.END)
-        self.preview_label.config(text="")
+        self.preview_label.config(
+            foreground="#888", text="(chưa có — bấm Preview để xem)",
+        )
 
     # ── List tab ──────────────────────────────────────────────────────────────
 
@@ -254,9 +294,9 @@ class UploadExternalFrame(ttk.Frame):
                     r.get("serial_hex", "")[:24] + (
                         "…" if len(r.get("serial_hex", "")) > 24 else ""
                     ),
-                    (r.get("not_valid_after") or "")[:19].replace("T", " "),
+                    fmt_local(r.get("not_valid_after")),
                     r["fingerprint_sha256"][:16] + "…",
-                    r["uploaded_at"][:19].replace("T", " "),
+                    fmt_local(r["uploaded_at"]),
                 ),
             )
 
@@ -315,6 +355,10 @@ class UploadExternalFrame(ttk.Frame):
         except ExternalCertError as e:
             messagebox.showerror("Lỗi", str(e))
             return
+        write_audit(
+            self.app.db_path, self.app.session["id"], Action.EXTERNAL_DELETED,
+            target_type="external_cert", target_id=str(cid),
+        )
         self._refresh_list()
 
 
@@ -360,41 +404,31 @@ class VerifyExternalDialog(tk.Toplevel):
             padding=(12, 0, 12, 8), wraplength=740, justify=tk.LEFT,
         ).pack(anchor="w")
 
-        # Output area
-        self.log_text = tk.Text(
-            self, font=font("mono"), wrap=tk.WORD, height=24,
-        )
-        self.log_text.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 6))
-        self.log_text.tag_config("ok",   foreground="#1e8449")
-        self.log_text.tag_config("fail", foreground="#c0392b")
-        self.log_text.tag_config("info", foreground="#2c3e50")
-        self.log_text.tag_config("head", foreground="#2471a3",
+        # Log chi tiết 5 bước — stream realtime để thấy RÕ message lỗi của từng
+        # bước. KHÔNG có khung "duyệt thành công/thất bại"; chỉ MỘT dòng tổng kết
+        # PASS/FAIL ở cuối log.
+        self.log_text = tk.Text(self, font=font("mono"), wrap=tk.WORD)
+        vsb = ttk.Scrollbar(self, orient="vertical", command=self.log_text.yview)
+        self.log_text.configure(yscrollcommand=vsb.set)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y, pady=(0, 12))
+        self.log_text.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 12))
+        self.log_text.tag_config("ok",   foreground=COLOR["success"])
+        self.log_text.tag_config("fail", foreground=COLOR["danger"])
+        self.log_text.tag_config("info", foreground=COLOR["text"])
+        self.log_text.tag_config("head", foreground=COLOR["primary"],
                                  font=font("label"))
-
-        # Banner
-        self.banner = tk.Frame(self, height=40, bg="#95a5a6")
-        self.banner.pack(fill=tk.X, padx=12, pady=(0, 12))
-        self.banner.pack_propagate(False)
-        self.banner_label = tk.Label(
-            self.banner, text="Chưa chạy verify",
-            bg="#95a5a6", fg="white", font=font("heading_md"),
-        )
-        self.banner_label.pack(expand=True, fill=tk.BOTH)
-        fit_to_content(self)
+        self._log('Nhập hostname rồi bấm "Chạy 5 bước" để xác thực.', "info")
 
     def _log(self, msg: str, tag: str = "info") -> None:
+        # Tự tô màu dòng PASS/FAIL trong log stream để lỗi hiện rõ.
+        if tag == "info":
+            if "[FAIL]" in msg:
+                tag = "fail"
+            elif "[PASS]" in msg:
+                tag = "ok"
         self.log_text.insert(tk.END, msg + "\n", tag)
         self.log_text.see(tk.END)
         self.log_text.update_idletasks()
-
-    def _set_banner(self, status: str) -> None:
-        mapping = {
-            "pass":  ("#27ae60", "PASS — Cert hợp lệ"),
-            "fail":  ("#c0392b", "FAIL — Cert KHÔNG hợp lệ"),
-        }
-        color, text = mapping[status]
-        self.banner.config(bg=color)
-        self.banner_label.config(bg=color, text=text)
 
     def _run(self) -> None:
         hostname = self.host_entry.get().strip()
@@ -402,22 +436,25 @@ class VerifyExternalDialog(tk.Toplevel):
             messagebox.showerror("Lỗi", "Hostname không được rỗng.")
             return
 
-        # Đảm bảo trust store có Root CA cert
+        # Đảm bảo trust store có Root CA cert (best-effort).
         try:
             publish_active_to_trust_store(self.app.db_path, TRUST_STORE_DIR)
-        except Exception as e:
-            self._log(f"[WARN] Không publish được trust store: {e}", "fail")
+        except Exception:
+            pass
+
+        self.log_text.delete("1.0", tk.END)
 
         if not os.path.isdir(TRUST_STORE_DIR):
             self._log(
-                f"[WARN] Trust store dir {TRUST_STORE_DIR} không tồn tại. "
-                f"Admin cần tạo Root CA trước.", "fail",
+                "[FAIL] Trust Store chưa tồn tại — Admin cần tạo Root CA "
+                "trước khi verify.", "fail",
             )
             return
 
-        self.log_text.delete("1.0", tk.END)
-        self._log(f"Verify external cert #{self.cert_rec['id']} với hostname '{hostname}'", "head")
-        self._log("")
+        self._log(
+            f"Verify external cert #{self.cert_rec['id']} — hostname '{hostname}'",
+            "head",
+        )
         self._log("===== BẮT ĐẦU 5 BƯỚC XÁC THỰC =====", "head")
 
         from core.verify import verify_certificate_full
@@ -431,12 +468,20 @@ class VerifyExternalDialog(tk.Toplevel):
                 peer_address=None,
             )
         except Exception as e:
-            self._log(f"[ERROR] Lỗi verify: {type(e).__name__}: {e}", "fail")
-            self._set_banner("fail")
+            self._log(f"[FAIL] Lỗi verify: {type(e).__name__}: {e}", "fail")
             return
 
-        self._log("===== KẾT QUẢ =====", "head")
-        for step_name, ok, _ in results:
-            tag = "ok" if ok else "fail"
-            self._log(f"   [{'PASS' if ok else 'FAIL'}] {step_name}", tag)
-        self._set_banner("pass" if overall else "fail")
+        # MỘT dòng tổng kết duy nhất ở cuối log (không có khung banner).
+        self._log("")
+        if overall:
+            self._log(
+                "[PASS] Tổng kết: chứng chỉ HỢP LỆ (qua tất cả các bước).", "ok")
+        else:
+            # Chỉ liệt kê các bước BẮT BUỘC (Bước 1-5) đã fail — bỏ bước phụ
+            # "Pin warning (advisory)" vì nó KHÔNG tính vào overall_pass.
+            fails = [name for name, ok, _ in results
+                     if not ok and not name.startswith("Bước phụ")]
+            self._log(
+                f"[FAIL] Tổng kết: chứng chỉ KHÔNG HỢP LỆ — thất bại ở: "
+                f"{', '.join(fails) or '?'}.", "fail",
+            )

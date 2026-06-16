@@ -14,6 +14,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 from ui.theme import font
+from ui.common import fmt_local
 from ui.widgets.status_table import StatusFilterTreeFrame
 from ui.widgets.modal import init_modal, make_button_row, fit_to_content
 from services.audit import write_audit, Action
@@ -87,15 +88,12 @@ class CSRQueueFrame(ttk.Frame):
 
     def _csr_to_values(self, c: dict) -> tuple:
         san_str = ", ".join(c["san_list"]) if c["san_list"] else "—"
-        reviewed = (
-            c["reviewed_at"][:19].replace("T", " ")
-            if c.get("reviewed_at") else "—"
-        )
+        reviewed = fmt_local(c["reviewed_at"]) if c.get("reviewed_at") else "—"
         return (
             c["id"],
             c.get("requester_username") or f"uid={c['requester_id']}",
             c["common_name"], san_str, c["status"],
-            c["submitted_at"][:19].replace("T", " "),
+            fmt_local(c["submitted_at"]),
             reviewed,
         )
 
@@ -175,7 +173,7 @@ class ViewCSRDialog(tk.Toplevel):
             f"Domain:    {rec['common_name']}\n"
             f"SAN:       {', '.join(rec['san_list']) or '—'}\n"
             f"Status:    {rec['status']}\n"
-            f"Submit:    {rec['submitted_at']}"
+            f"Submit:    {fmt_local(rec['submitted_at'])}"
         )
         if rec.get("reject_reason"):
             info += f"\nReason:    {rec['reject_reason']}"
@@ -277,7 +275,7 @@ class ApproveCSRDialog(tk.Toplevel):
         messagebox.showinfo(
             "Đã phát hành",
             f"Cert #{issued['id']} (serial {issued['serial_hex']}) "
-            f"hết hạn {issued['not_valid_after']}.",
+            f"hết hạn {fmt_local(issued['not_valid_after'])}.",
         )
         if self.on_done:
             self.on_done()

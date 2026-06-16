@@ -1,0 +1,994 @@
+% !TEX program = xelatex
+%==============================================================================
+%  Phân công code vấn đáp đồ án X509Certificate
+%  Phần việc chi tiết: NGUYỄN LÊ ANH KIỆT
+%  — Vòng đời chứng chỉ, Thu hồi & Hạ tầng CRL/OCSP —
+%
+%  Biên dịch:  xelatex PhanCong_NguyenLeAnhKiet.tex  (chạy 2 lần để có mục lục)
+%==============================================================================
+\documentclass[12pt,a4paper]{article}
+
+% ---- Font (XeLaTeX, hỗ trợ Unicode tiếng Việt đầy đủ) -----------------------
+\usepackage{fontspec}
+\setmainfont{Latin Modern Roman}
+\setsansfont{Latin Modern Sans}
+\setmonofont{Latin Modern Mono}
+
+% ---- Bố cục trang -----------------------------------------------------------
+\usepackage[a4paper,margin=2.4cm]{geometry}
+\usepackage{setspace}\setstretch{1.18}
+\usepackage{parskip}
+\usepackage{amssymb} % \square cho checklist
+
+% ---- Màu sắc ----------------------------------------------------------------
+\usepackage{xcolor}
+\definecolor{accent}{HTML}{1F4E79}
+\definecolor{accentlt}{HTML}{2E75B6}
+\definecolor{rulegray}{HTML}{C3CEDA}
+\definecolor{codebg}{HTML}{F6F8FA}
+\definecolor{codeframe}{HTML}{D9E1EA}
+\definecolor{cmt}{HTML}{6A737D}
+\definecolor{kw}{HTML}{0B5394}
+\definecolor{str}{HTML}{A31515}
+\definecolor{num}{HTML}{098658}
+\definecolor{noteblue}{HTML}{EAF2FB}
+\definecolor{qabg}{HTML}{F3EEFA}
+\definecolor{qarule}{HTML}{7E57C2}
+\definecolor{warnbg}{HTML}{FBF1E6}
+\definecolor{warnrule}{HTML}{D9822B}
+\definecolor{okbg}{HTML}{E8F5E9}
+\definecolor{okrule}{HTML}{2E7D32}
+
+% ---- Tiêu đề mục ------------------------------------------------------------
+\usepackage{titlesec}
+\titleformat{\section}{\Large\bfseries\color{accent}}{\thesection}{0.6em}{}
+\titleformat{\subsection}{\large\bfseries\color{accentlt}}{\thesubsection}{0.6em}{}
+\titleformat{\subsubsection}{\normalsize\bfseries\color{accentlt}}{\thesubsubsection}{0.5em}{}
+\titlespacing*{\section}{0pt}{1.4em}{0.6em}
+
+% ---- Danh sách --------------------------------------------------------------
+\usepackage{enumitem}
+\setlist[itemize]{leftmargin=1.4em,topsep=2pt,itemsep=2pt}
+\setlist[enumerate]{leftmargin=1.6em,topsep=2pt,itemsep=2pt}
+
+% ---- Bảng -------------------------------------------------------------------
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{colortbl}
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+
+% ---- Hộp callout (tcolorbox) ------------------------------------------------
+\usepackage[most]{tcolorbox}
+\newtcolorbox{notebox}{colback=noteblue,colframe=accentlt,boxrule=0pt,
+  leftrule=3pt,arc=2pt,left=8pt,right=8pt,top=5pt,bottom=5pt}
+\newtcolorbox{qabox}{colback=qabg,colframe=qarule,boxrule=0pt,
+  leftrule=3pt,arc=2pt,left=8pt,right=8pt,top=5pt,bottom=5pt}
+\newtcolorbox{warnbox}{colback=warnbg,colframe=warnrule,boxrule=0pt,
+  leftrule=3pt,arc=2pt,left=8pt,right=8pt,top=5pt,bottom=5pt}
+
+% ---- Mã nguồn (fvextra Verbatim — render đúng tiếng Việt dưới XeLaTeX) -------
+% Lưu ý: listings reorder/garble dấu tiếng Việt trong code, nên dùng fvextra.
+\usepackage{fvextra}
+\fvset{
+  numbers=left,
+  numbersep=8pt,
+  frame=single,
+  framesep=6pt,
+  rulecolor=\color{codeframe},
+  fontsize=\footnotesize,
+  breaklines=true,
+  breakanywhere=true,
+  breaksymbolleft={\footnotesize\color{cmt}\ensuremath{\hookrightarrow}},
+}
+% \code: định danh inline; underscore tự cho phép ngắt dòng (tránh tràn bảng).
+\newcommand{\code}[1]{{\ttfamily\small\def\_{\textunderscore\discretionary{}{}{}}#1}}
+
+% ---- Liên kết ---------------------------------------------------------------
+\usepackage{hyperref}
+\hypersetup{
+  colorlinks=true, linkcolor=accent, urlcolor=accentlt, citecolor=accent,
+  pdftitle={Phan cong code van dap - Nguyen Le Anh Kiet - X509Certificate},
+  pdfauthor={Nguyen Le Anh Kiet},
+}
+
+% ---- Header / footer --------------------------------------------------------
+\usepackage{fancyhdr}
+\pagestyle{fancy}\fancyhf{}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\footrulewidth}{0pt}
+\fancyhead[L]{\footnotesize\color{accent}X509Certificate — Phân công vấn đáp}
+\fancyhead[R]{\footnotesize\color{accent}Nguyễn Lê Anh Kiệt}
+\fancyfoot[C]{\thepage}
+
+% ---- Hộp nhỏ dùng cho sơ đồ (thay cho TikZ, biên dịch ổn định) --------------
+\newcommand{\flowbox}[2]{\colorbox{#1}{\parbox{8.4cm}{\centering #2}}}
+\newcommand{\stepbox}[1]{\fcolorbox{accent}{codebg}{\footnotesize\strut #1}}
+
+\begin{document}
+
+%==============================================================================
+% TRANG BÌA
+%==============================================================================
+\begin{titlepage}
+\centering
+\vspace*{2.2cm}
+{\color{accent}\rule{\linewidth}{1.2pt}}\\[0.6cm]
+{\Huge\bfseries Phân công code vấn đáp đồ án}\\[0.35cm]
+{\Huge\bfseries\color{accent} X509Certificate}\\[0.5cm]
+{\Large Phần việc chi tiết của thành viên}\\[0.3cm]
+{\LARGE\bfseries Nguyễn Lê Anh Kiệt}\\[0.45cm]
+{\large\itshape Vòng đời chứng chỉ, Thu hồi\\ và Hạ tầng CRL \& OCSP}\\[0.5cm]
+{\color{accent}\rule{\linewidth}{1.2pt}}\\[1.4cm]
+
+\begin{minipage}{0.85\linewidth}
+\centering\small
+Tài liệu này mô tả chi tiết phần code, lý thuyết X.509 cần nắm, các test case
+và cách tích hợp cho phần việc \textbf{vòng đời chứng chỉ (lifecycle), thu hồi
+(revocation) và hạ tầng phân phối trạng thái CRL \& OCSP}, gắn trực tiếp với mã
+nguồn thực tế của đồ án trong các thư mục \code{src/core/} (\code{crl.py}),
+\code{src/services/} (\code{cert\_lifecycle.py}, \code{revocation\_workflow.py},
+\code{crl\_publish.py}, \code{infra\_manager.py}), \code{src/infra/}
+(\code{crl\_server.py}, \code{ocsp\_server.py}) và các màn hình UI tương ứng.
+\end{minipage}
+
+\vfill
+{\large Môn: Mã hoá và Ứng dụng (MHUD)}\\[0.2cm]
+{\large Học phần đồ án X.509 Certificate}\\[0.6cm]
+{\small Ngày biên soạn: 14/06/2026}
+\end{titlepage}
+
+\tableofcontents
+\thispagestyle{fancy}
+\clearpage
+
+%==============================================================================
+\section{Mục tiêu và phạm vi phần việc}
+%==============================================================================
+
+Theo bảng phân công chung, thành viên \textbf{Nguyễn Lê Anh Kiệt} phụ trách
+cụm chức năng \textbf{vòng đời chứng chỉ, thu hồi và hạ tầng CRL \& OCSP}. Đây
+là phần \emph{nằm ở khâu hậu cấp phát}: sau khi một chứng chỉ đã được Root CA
+ký và phát hành cho khách hàng, nó vẫn cần được quản lý suốt vòng đời còn lại
+--- gia hạn (renew), thu hồi (revoke) khi khoá bị lộ hay không còn dùng nữa, và
+quan trọng nhất là \emph{công bố trạng thái thu hồi ra ngoài} để bất kỳ bên nào
+cũng kiểm tra được một cert còn hợp lệ hay không.
+
+Cụm này trả lời câu hỏi cốt lõi của PKI: \emph{``Làm sao biết một chứng chỉ tuy
+chưa hết hạn nhưng đã bị thu hồi?''}. Câu trả lời gồm hai cơ chế bù nhau:
+\textbf{CRL} (Certificate Revocation List --- danh sách thu hồi do CA ký, phát
+hành định kỳ) và \textbf{OCSP} (Online Certificate Status Protocol --- tra cứu
+trạng thái từng serial theo thời gian thực). Phần việc của Kiệt hiện thực trọn
+vẹn cả hai từ tầng nghiệp vụ (services) tới tầng máy chủ HTTP (infra) và giao
+diện người dùng (UI) cho cả Admin lẫn Customer.
+
+\subsection{Ánh xạ khái niệm $\to$ file code $\to$ vai trò}
+
+Bảng dưới đây liên kết từng khái niệm lý thuyết với file mã nguồn thực tế và vai
+trò của nó trong hệ thống. Đây là bản đồ tổng quát để định vị nhanh khi vấn đáp.
+
+\begin{table}[h]
+\centering
+\footnotesize
+\begin{tabularx}{\linewidth}{L{3.3cm} L{4.6cm} X}
+\toprule
+\textbf{Khái niệm} & \textbf{File code} & \textbf{Vai trò} \\
+\midrule
+Vòng đời cert (status động) &
+\code{services/cert\_lifecycle.py} &
+Suy ra \code{active}/\code{expired}/\code{revoked}, liệt kê cert, revoke, renew. \\
+\addlinespace
+Workflow thu hồi 2 phía &
+\code{services/revocation\_workflow.py} &
+Customer gửi yêu cầu thu hồi; Admin duyệt (approve/reject) atomic. \\
+\addlinespace
+Lõi CRL \& OCSP DB &
+\code{core/crl.py} &
+Build/ký CRL bằng cryptography; đọc-ghi OCSP DB (JSON realtime). \\
+\addlinespace
+Snapshot \& publish CRL &
+\code{services/crl\_publish.py} &
+Chụp serial revoked từ DB, ký CRL bằng Root CA, ghi file + sync OCSP. \\
+\addlinespace
+Máy chủ phân phối CRL &
+\code{infra/crl\_server.py} &
+HTTP \code{GET /crl.pem} để client tải CRL về đối chiếu. \\
+\addlinespace
+OCSP responder &
+\code{infra/ocsp\_server.py} &
+HTTP \code{GET /ocsp?serial=} trả GOOD/REVOKED; flag \code{enabled} giả lập down. \\
+\addlinespace
+Quản lý vòng đời 4 server &
+\code{services/infra\_manager.py} &
+Singleton start/stop idempotent cặp Prod (8889/8888) + Lab (9889/9888). \\
+\addlinespace
+UI quản lý cert (Admin) &
+\code{ui/admin/cert\_mgmt\_view.py} &
+Bảng cert, dialog Revoke + Renew. \\
+\addlinespace
+UI duyệt thu hồi (Admin) &
+\code{ui/admin/revoke\_queue\_view.py} &
+Queue request, Approve (auto publish CRL) / Reject. \\
+\addlinespace
+UI cập nhật CRL (Admin) &
+\code{ui/admin/crl\_publish\_view.py} &
+Nút ``Publish CRL Now'', xem diff DB vs CRL hiện hành. \\
+\addlinespace
+UI cert của tôi (Customer) &
+\code{ui/customer/my\_certs\_view.py} &
+Customer xem + tải cert đã cấp. \\
+\addlinespace
+UI xin thu hồi (Customer) &
+\code{ui/customer/revoke\_request\_view.py} &
+Customer chọn cert active + lý do → gửi yêu cầu. \\
+\addlinespace
+UI tra CRL (Customer) &
+\code{ui/customer/view\_crl\_view.py} &
+Tra cứu danh sách thu hồi công khai theo serial/CN. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{notebox}
+\textbf{Phạm vi đáp ứng yêu cầu đề bài.} Cụm này hiện thực các hạng mục
+A.8 (Admin quản lý cert: revoke/renew), A.9 (Admin duyệt yêu cầu thu hồi),
+A.10 (cập nhật CRL), B.6 (Customer xem/tải cert), B.7 (Customer xin thu hồi),
+B.8 (Customer tra CRL công khai) và một phần B.9 (hạ tầng để verify dựa vào
+CRL/OCSP).
+\end{notebox}
+
+%==============================================================================
+\section{Kiến trúc tổng thể và vị trí của thành viên trong hệ thống}
+%==============================================================================
+
+Hệ thống chia thành 3 tầng rõ rệt: tầng \textbf{lõi mật mã} (\code{core/}) chỉ
+làm việc với đối tượng \code{cryptography}; tầng \textbf{nghiệp vụ}
+(\code{services/}) chứa logic quy trình + truy vấn DB SQLite; tầng \textbf{hạ
+tầng + UI} (\code{infra/}, \code{ui/}) cung cấp HTTP server và màn hình tương
+tác. Cụm của Kiệt trải khắp cả 3 tầng theo một luồng dữ liệu thống nhất.
+
+\subsection{Luồng thu hồi end-to-end}
+
+Sơ đồ dưới đây mô tả luồng từ lúc khách hàng xin thu hồi cho tới lúc CRL/OCSP
+phản ánh trạng thái mới ra bên ngoài.
+
+\begin{center}
+\flowbox{noteblue}{\textbf{Customer} chọn cert active + lý do\\
+(\code{revoke\_request\_view} $\to$ \code{submit\_revoke\_request})}\\[4pt]
+$\downarrow$ tạo bản ghi \code{revocation\_requests} status=\code{pending}\\[6pt]
+\flowbox{warnbg}{\textbf{Admin} mở queue, bấm Approve\\
+(\code{revoke\_queue\_view} $\to$ \code{approve\_revocation})}\\[4pt]
+$\downarrow$ trong 1 transaction: set request=\code{approved} + UPDATE \code{issued\_certs.revoked\_at}\\[6pt]
+\flowbox{okbg}{\code{sync\_ocsp\_db} ghi \code{ocsp\_db.json} (realtime)\\
+$+$ \code{publish\_crl} ký CRL bằng Root CA $\to$ \code{crl.pem}}\\[4pt]
+$\downarrow$\\[6pt]
+\flowbox{codebg}{Hạ tầng phục vụ trạng thái mới:\\
+\code{crl\_server} GET \code{/crl.pem} $\;|\;$ \code{ocsp\_server} GET \code{/ocsp?serial=}}
+\end{center}
+
+Điểm mấu chốt cần nhớ khi vấn đáp: có \textbf{hai nguồn sự thật tách biệt}.
+\code{ocsp\_db.json} luôn được cập nhật \emph{ngay} mỗi khi có revoke (qua
+\code{sync\_ocsp\_db}), nên OCSP responder luôn fresh. Còn file \code{crl.pem}
+chỉ thay đổi khi có hành động \emph{Publish CRL} (thủ công hoặc tự động sau
+approve). Sự lệch pha này chính là mô phỏng đúng thực tế: CRL có ``cửa sổ trễ''
+giữa hai lần phát hành, còn OCSP gần như tức thời.
+
+\subsection{Bảng vị trí module trong toàn hệ thống}
+
+\begin{table}[h]
+\centering
+\footnotesize
+\begin{tabularx}{\linewidth}{L{3.0cm} L{3.3cm} X}
+\toprule
+\textbf{Tầng} & \textbf{Module của Kiệt} & \textbf{Phụ thuộc / được gọi bởi} \\
+\midrule
+Core & \code{core/crl.py} & dùng \code{cryptography}; được \code{crl\_publish} và \code{ocsp\_server} gọi. \\
+\addlinespace
+Services & \code{cert\_lifecycle}, \code{revocation\_workflow}, \code{crl\_publish} & gọi \code{core/crl}, \code{ca\_admin} (load Root CA), \code{db.connection}. \\
+\addlinespace
+Services & \code{infra\_manager} & gọi \code{infra/crl\_server} + \code{infra/ocsp\_server}; được \code{ui/app.py} gọi lúc boot. \\
+\addlinespace
+Infra & \code{crl\_server}, \code{ocsp\_server} & dùng \code{http.server}; \code{ocsp\_server} đọc OCSP DB qua \code{core.crl}. \\
+\addlinespace
+UI Admin & 3 view & gọi services lifecycle/workflow/publish + \code{services.audit}. \\
+\addlinespace
+UI Customer & 3 view & gọi services hoặc Admin API (chế độ remote). \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+%==============================================================================
+\section{Phần code cần làm (chi tiết)}
+%==============================================================================
+
+Phần này đi qua từng nhóm hàm quan trọng, kèm code thật trích từ mã nguồn và
+giải thích từng ý. Mỗi sinh viên phụ trách cần đọc kỹ để trả lời được câu hỏi
+``hàm này làm gì, vì sao viết như vậy''.
+
+\subsection{Vòng đời cert: suy ra trạng thái động}
+
+Điểm thiết kế cốt lõi của \code{cert\_lifecycle.py} là \textbf{status không lưu
+trong DB} mà được \emph{tính lại mỗi lần đọc} dựa trên hai cột thô:
+\code{revoked\_at} và \code{not\_valid\_after}.
+
+\begin{Verbatim}
+def _compute_status(row, now: datetime) -> str:
+    """Suy ra status hiện tại của cert."""
+    if row["revoked_at"]:
+        return "revoked"
+    na = _parse_iso(row["not_valid_after"])
+    if na is None:
+        return "active"
+    if na.tzinfo is None:                # not_valid_after lưu tz-aware;
+        na = na.replace(tzinfo=timezone.utc)   # nếu không, gán UTC.
+    if na < now:
+        return "expired"
+    return "active"
+\end{Verbatim}
+
+\textbf{Giải thích từng ý:}
+\begin{itemize}
+  \item Thứ tự kiểm tra có chủ đích: \code{revoked} được ưu tiên cao nhất ---
+    một cert đã thu hồi thì dù còn hạn vẫn báo \code{revoked}.
+  \item Nếu chưa revoke, so sánh \code{not\_valid\_after} với \code{now}: quá
+    hạn $\to$ \code{expired}, ngược lại $\to$ \code{active}.
+  \item Xử lý timezone tỉ mỉ: nếu chuỗi ISO không kèm offset thì gán UTC để
+    tránh lỗi so sánh ``naive vs aware datetime''.
+\end{itemize}
+
+\begin{notebox}
+\textbf{Vì sao tính động thay vì lưu cột \code{status}?} Vì \code{expired} thay
+đổi theo thời gian mà \emph{không} có sự kiện nào ghi vào DB --- một cert tự
+``hết hạn'' khi đồng hồ vượt mốc. Nếu lưu cứng, ta phải có job quét định kỳ cập
+nhật, dễ sai lệch. Tính động đảm bảo status luôn đúng tại thời điểm truy vấn.
+\end{notebox}
+
+Hàm \code{\_list\_certs} áp dụng filter status \emph{post-hoc} (sau khi đã tính
+status) chứ không đưa vào câu \code{WHERE} SQL, đúng vì status là trường suy ra:
+
+\begin{Verbatim}
+now = datetime.now(timezone.utc)
+with conn_scope(db_path) as conn:
+    rows = conn.execute(sql, params).fetchall()
+    out = []
+    for r in rows:
+        d = _row_to_dict(r, now)        # gắn d["status"]
+        if status in (None, "all") or d["status"] == status:
+            out.append(d)
+    return out
+\end{Verbatim}
+
+\subsection{Revoke và Renew một chứng chỉ}
+
+\code{revoke\_cert} đánh dấu thu hồi: validate lý do, chặn revoke trùng (giữ duy
+nhất một sự kiện thu hồi), ghi \code{revoked\_at} trong transaction rồi
+\emph{sync ngay} OCSP DB.
+
+\begin{Verbatim}
+now = datetime.now(timezone.utc).isoformat()
+with transaction(db_path) as conn:
+    row = conn.execute(
+        "SELECT revoked_at FROM issued_certs WHERE id = ?", (cert_id,),
+    ).fetchone()
+    if row is None:
+        raise CertLifecycleError("Không tìm thấy cert.")
+    if row["revoked_at"]:
+        raise CertLifecycleError(f"Cert đã bị revoked lúc {row['revoked_at']}.")
+    conn.execute(
+        "UPDATE issued_certs SET revoked_at = ?, revocation_reason = ? "
+        "WHERE id = ?", (now, reason, cert_id),
+    )
+sync_ocsp_db(db_path, ocsp_db_path)     # OCSP fresh ngay, CRL publish sau
+return get_cert_detail(cert_id, db_path)
+\end{Verbatim}
+
+\code{renew\_cert} \emph{phát hành cert mới} giữ nguyên subject + public key của
+cert cũ, hiệu lực mới, không tự revoke cert cũ. Đây là khác biệt then chốt với
+``reissue qua CSR mới'':
+
+\begin{Verbatim}
+old = get_cert_detail(cert_id, db_path)
+if old["revoked_at"]:
+    raise CertLifecycleError("Cert đã bị thu hồi — không thể renew.")
+ca_cert, ca_key = load_active_root_ca_with_key(db_path)
+old_cert_obj = x509.load_pem_x509_certificate(bytes(old["cert_pem"]))
+new_cert, new_serial = reissue_cert_for_renewal(
+    old_cert_obj, ca_cert, ca_key,
+    validity_days=validity_days, ocsp_url=ocsp_url, crl_url=crl_url,
+)
+# INSERT cert mới với renewed_from_id = cert_id (truy vết chuỗi gia hạn)
+\end{Verbatim}
+
+\begin{notebox}
+\textbf{Cột \code{renewed\_from\_id}} lưu liên kết cert mới $\to$ cert cũ, cho
+phép truy vết toàn bộ ``chuỗi gia hạn'' của một domain. UI hiển thị cột ``Renew
+từ'' chính là dựa vào trường này.
+\end{notebox}
+
+\subsection{Workflow thu hồi hai phía}
+
+\code{revocation\_workflow.py} tách quyền: \textbf{customer chỉ được xin}, còn
+\textbf{admin mới được quyết}. Phía customer, \code{submit\_revoke\_request}
+chứa một \emph{BOLA guard} (Broken Object Level Authorization) quan trọng:
+
+\begin{Verbatim}
+cert = conn.execute(
+    "SELECT id, owner_id, revoked_at, common_name "
+    "FROM issued_certs WHERE id = ?", (cert_id,),
+).fetchone()
+if cert is None or cert["owner_id"] != requester_id:
+    raise RevocationWorkflowError(
+        f"Cert id={cert_id} không tồn tại hoặc không thuộc về bạn.")
+if cert["revoked_at"]:
+    raise RevocationWorkflowError("Cert đã bị thu hồi rồi, không cần gửi yêu cầu.")
+# Chặn trùng: 1 cert chỉ có tối đa 1 request pending
+dup = conn.execute(
+    "SELECT id FROM revocation_requests "
+    "WHERE issued_cert_id = ? AND status = 'pending'", (cert_id,),
+).fetchone()
+if dup:
+    raise RevocationWorkflowError(f"Đã có yêu cầu pending (request #{dup['id']}).")
+\end{Verbatim}
+
+\textbf{Giải thích:} kiểm tra \code{owner\_id != requester\_id} ngăn người dùng A
+xin thu hồi cert của người dùng B (lỗ hổng phân quyền cấp đối tượng cổ điển).
+Việc chặn request trùng giữ queue admin sạch.
+
+Phía admin, \code{approve\_revocation} là điểm \emph{atomic} chống race khi hai
+admin cùng duyệt một request. Toàn bộ thay đổi DB nằm trong một transaction:
+
+\begin{Verbatim}
+with transaction(db_path) as conn:
+    req = conn.execute("SELECT id, issued_cert_id, reason, status "
+        "FROM revocation_requests WHERE id = ?", (req_id,)).fetchone()
+    if req is None:
+        raise RevocationWorkflowError("Không tìm thấy request.")
+    if req["status"] != "pending":
+        raise RevocationWorkflowError(
+            f"Request đang ở status '{req['status']}', không approve được.")
+    cert = conn.execute("SELECT id, revoked_at FROM issued_certs WHERE id = ?",
+        (req["issued_cert_id"],)).fetchone()
+    if cert["revoked_at"] is None:          # chỉ ghi nếu chưa revoke
+        conn.execute("UPDATE issued_certs SET revoked_at = ?, "
+            "revocation_reason = ? WHERE id = ?", (now, req["reason"], cert["id"]))
+        cert_was_revoked = True
+    else:
+        cert_was_revoked = False            # admin đã revoke trực tiếp trước đó
+    conn.execute("UPDATE revocation_requests SET status = 'approved', "
+        "reviewed_at = ?, reviewed_by = ? WHERE id = ?", (now, admin_id, req_id))
+\end{Verbatim}
+
+Sau khi commit transaction, hàm gọi \code{sync\_ocsp\_db} (OCSP fresh ngay) và
+nếu caller truyền \code{crl\_path} thì gọi luôn \code{publish\_crl} để CRL tự
+cập nhật:
+
+\begin{Verbatim}
+sync_ocsp_db(db_path, ocsp_db_path)
+crl_result = crl_error = None
+if crl_path:
+    try:
+        crl_result = publish_crl(admin_id=admin_id, db_path=db_path,
+            crl_path=crl_path, ocsp_db_path=ocsp_db_path)
+    except CRLPublishError as e:
+        crl_error = str(e)
+return {"id": req_id, "cert_was_revoked": cert_was_revoked,
+        "crl_result": crl_result, "crl_error": crl_error, ...}
+\end{Verbatim}
+
+\begin{notebox}
+\textbf{Điểm tinh tế về race re-check.} Nếu admin đã revoke cert trực tiếp ở màn
+A.8 trước đó, khi approve request hệ thống \emph{vẫn} đổi request sang
+\code{approved} (để khép audit) nhưng \emph{không ghi đè} \code{revoked\_at} cũ
+--- giữ đúng thời điểm thu hồi đầu tiên. Đây là re-check trạng thái cert ngay
+trong transaction.
+\end{notebox}
+
+\subsection{Lõi CRL và OCSP DB (core/crl.py)}
+
+\code{build\_crl} dựng đối tượng CRL bằng builder của thư viện
+\code{cryptography} và \emph{ký} bằng khoá riêng của issuer (Root CA):
+
+\begin{Verbatim}
+def build_crl(issuer_cert, issuer_key, revoked_serials, validity_days=7):
+    now = datetime.now(timezone.utc)
+    builder = (x509.CertificateRevocationListBuilder()
+        .issuer_name(issuer_cert.subject)
+        .last_update(now)
+        .next_update(now + timedelta(days=validity_days)))
+    for serial in revoked_serials:
+        revoked = (x509.RevokedCertificateBuilder()
+            .serial_number(int(serial)).revocation_date(now).build())
+        builder = builder.add_revoked_certificate(revoked)
+    return builder.sign(private_key=issuer_key, algorithm=hashes.SHA256())
+\end{Verbatim}
+
+OCSP DB là một file JSON đơn giản chứa danh sách serial bị thu hồi. Hai hàm
+đọc-ghi và một hàm dùng riêng để \emph{demo khoảng cách CRL vs OCSP}:
+
+\begin{Verbatim}
+def load_revoked_list(path: str) -> set:
+    """Đọc danh sách serial bị revoke từ JSON. Trả về set[int]."""
+    if not os.path.exists(path):
+        return set()
+    with open(path) as f:
+        data = json.load(f)
+    return set(int(s) for s in data)
+
+def revoke_serial_ocsp_only(serial: int, ocsp_db_path: str):
+    """Thêm serial vào OCSP DB mà KHÔNG cập nhật CRL."""
+    revoked = load_revoked_list(ocsp_db_path)
+    revoked.add(serial)
+    save_revoked_list(list(revoked), ocsp_db_path)
+\end{Verbatim}
+
+\code{build\_and\_publish\_crl} là tiện ích snapshot toàn bộ OCSP DB rồi ký CRL
+--- tương đương bấm nút ``Publish CRL Now''.
+
+\subsection{Snapshot và publish CRL (crl\_publish.py)}
+
+\code{snapshot\_revoked\_serials} đọc tất cả cert có \code{revoked\_at} khác
+NULL, parse \code{serial\_hex} (hex) sang int. Đáng chú ý: \emph{không} loại trừ
+cert đã hết hạn --- đúng chuẩn CRL.
+
+\begin{Verbatim}
+def snapshot_revoked_serials(db_path: str) -> "list[int]":
+    with conn_scope(db_path) as conn:
+        rows = conn.execute(
+            "SELECT serial_hex FROM issued_certs "
+            "WHERE revoked_at IS NOT NULL ORDER BY revoked_at ASC").fetchall()
+    out = []
+    for r in rows:
+        try:
+            out.append(int(r["serial_hex"], 16))
+        except (ValueError, TypeError):
+            print(f"[crl_publish] WARN: serial_hex không parse được: "
+                  f"{r['serial_hex']!r}", file=sys.stderr)
+    return out
+\end{Verbatim}
+
+\code{publish\_crl} là trái tim của A.10: load Root CA active, snapshot serial,
+build + ký CRL, ghi file, đồng bộ OCSP, trả metadata cho UI.
+
+\begin{Verbatim}
+def publish_crl(admin_id, db_path, crl_path=DEFAULT_CRL_PATH,
+                ocsp_db_path=DEFAULT_OCSP_DB_PATH, validity_days=7):
+    try:
+        ca_cert, ca_key = load_active_root_ca_with_key(db_path)
+    except CAError as e:
+        raise CRLPublishError(f"Không publish được CRL: {e} Tạo Root CA trước.")
+    serials = snapshot_revoked_serials(db_path)
+    crl = build_crl(ca_cert, ca_key, serials, validity_days=validity_days)
+    os.makedirs(os.path.dirname(crl_path) or ".", exist_ok=True)
+    save_crl(crl, crl_path)
+    if ocsp_db_path:
+        sync_ocsp_db(db_path, ocsp_db_path)
+    return {"revoked_count": len(serials), "crl_path": os.path.abspath(crl_path),
+            "this_update": ..., "next_update": ...,
+            "issuer": ca_cert.subject.rfc4514_string()}
+\end{Verbatim}
+
+\code{sync\_ocsp\_db} tách riêng vì \emph{không cần ký} --- chỉ ghi JSON, nên
+revoke flow gọi được tức thì mà không phụ thuộc Root CA. \code{list\_crl\_entries}
+và \code{get\_published\_crl\_info} parse lại file CRL để UI hiển thị; bản trước
+còn JOIN \code{issued\_certs} làm giàu thêm CN + owner cho dễ đọc.
+
+\subsection{Hạ tầng máy chủ: CRL server}
+
+\code{crl\_server.py} dùng factory pattern: mỗi lần gọi
+\code{start\_crl\_server} tạo một Handler class riêng capture \code{crl\_path}
+qua closure, cho phép chạy nhiều instance (prod + lab) trên port khác nhau.
+
+\begin{Verbatim}
+class CRLHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path not in ("/crl.pem", "/crl"):
+            self.send_response(404); self.end_headers(); return
+        if not os.path.exists(crl_path):
+            self.send_response(404); self.end_headers()
+            self.wfile.write(b"CRL not found"); return
+        with open(crl_path, "rb") as f:
+            data = f.read()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-pem-file")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers(); self.wfile.write(data)
+\end{Verbatim}
+
+Server chạy trên \code{ThreadingHTTPServer} với \code{daemon\_threads = True}:
+mỗi request một thread con, một client chậm không treo các client khác, và
+thread tự thoát khi process chính kết thúc.
+
+\subsection{Hạ tầng máy chủ: OCSP responder}
+
+\code{ocsp\_server.py} nhận \code{GET /ocsp?serial=<int>} và trả JSON
+\code{GOOD}/\code{REVOKED}. Flag \code{enabled} bọc trong một dict mutable để UI
+\emph{toggle runtime} giả lập OCSP down (trả 503) mà không cần restart server.
+
+\begin{Verbatim}
+class OCSPHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if not state.get("enabled", True):           # giả lập down
+            body = b'{"error": "OCSP responder temporarily unavailable"}'
+            self.send_response(503); ...; self.wfile.write(body); return
+        parsed = urlparse(self.path)
+        if parsed.path != "/ocsp":
+            self.send_response(404); self.end_headers(); return
+        serial_raw = parse_qs(parsed.query).get("serial", [None])[0]
+        if serial_raw is None:
+            self._json(400, {"error": "missing 'serial' parameter"}); return
+        serial_int = int(serial_raw)
+        revoked = load_revoked_list(revoked_list_path)   # đọc JSON realtime
+        status = "REVOKED" if serial_int in revoked else "GOOD"
+        self._json(200, {"serial": str(serial_int), "status": status})
+\end{Verbatim}
+
+\begin{notebox}
+\textbf{Vì sao OCSP đọc file mỗi request?} Để luôn fresh. Mỗi khi revoke gọi
+\code{sync\_ocsp\_db} ghi lại JSON, lần tra OCSP kế tiếp đã thấy ngay. Đây chính
+là lý do OCSP ``realtime'' còn CRL thì trễ.
+\end{notebox}
+
+\subsection{Quản lý vòng đời 4 server: infra\_manager}
+
+\code{infra\_manager.py} là singleton quản hai cặp server: \textbf{Prod}
+(8889/8888, auto-start lúc boot, phục vụ cert thật từ DB) và \textbf{Lab}
+(9889/9888, start thủ công khi mở Verification Lab, phục vụ cert demo). Các thao
+tác start đều \emph{idempotent} --- gọi nhiều lần chỉ start một lần:
+
+\begin{Verbatim}
+def start_prod_servers(self):
+    os.makedirs(CERTS_DIR, exist_ok=True)
+    if self._prod_crl is None:                  # idempotent guard
+        try:
+            self._prod_crl = start_crl_server(host="localhost",
+                port=PROD_CRL_PORT, crl_path=PROD_CRL_PATH)
+        except OSError as e:
+            _log.warning("Prod CRL server không start được (port %d?): %s",
+                         PROD_CRL_PORT, e)
+    if self._prod_ocsp is None:
+        self._prod_ocsp, self._prod_ocsp_state = start_ocsp_server(
+            host="localhost", port=PROD_OCSP_PORT, revoked_list_path=PROD_OCSP_DB)
+\end{Verbatim}
+
+Toggle OCSP enabled dựa vào việc \code{start\_ocsp\_server} trả về cả
+\emph{state dict mutable}; manager giữ reference này và sửa trực tiếp field
+\code{enabled}:
+
+\begin{Verbatim}
+def set_lab_ocsp_enabled(self, enabled: bool):
+    if self._lab_ocsp_state is not None:
+        self._lab_ocsp_state["enabled"] = enabled   # handler thấy ngay
+\end{Verbatim}
+
+Singleton lấy qua \code{get\_infra()} (lazy init), đảm bảo cả app chỉ có một
+instance quản lý vòng đời 4 server suốt process.
+
+\subsection{Giao diện người dùng (UI)}
+
+\textbf{Admin --- \code{cert\_mgmt\_view}}: bảng cert tô màu theo status
+(active xanh, expired xám, revoked đỏ), nút Revoke mở \code{RevokeCertDialog}
+(lý do bắt buộc) gọi \code{revoke\_cert}, nút Renew mở \code{RenewCertDialog} gọi
+\code{renew\_cert}; mọi thao tác đều ghi \code{write\_audit}.
+
+\textbf{Admin --- \code{revoke\_queue\_view}}: queue request (mặc định filter
+\code{pending}). Khi Approve, gọi \code{approve\_revocation} với cả
+\code{crl\_path} nên CRL \emph{tự publish}; UI ghi audit \code{REVOKE\_APPROVED},
+\code{CERT\_REVOKED} và \code{CRL\_PUBLISHED}, và thông báo số serial trong CRL.
+
+\begin{Verbatim}
+result = approve_revocation(req_id, self.app.session["id"], self.app.db_path,
+    ocsp_db_path=DEFAULT_OCSP_DB_PATH, crl_path=DEFAULT_CRL_PATH)
+...
+crl_result = result.get("crl_result")
+if crl_result:
+    write_audit(..., Action.CRL_PUBLISHED, ...,
+        details={"revoked_count": crl_result["revoked_count"],
+                 "source": "auto_after_revoke_approve"})
+\end{Verbatim}
+
+\textbf{Admin --- \code{crl\_publish\_view}}: hiển thị metadata CRL hiện hành,
+snapshot DB (số serial sẽ vào CRL), \emph{diff} cảnh báo nếu DB lệch CRL, và nút
+``Publish CRL Now'' gọi \code{publish\_crl}.
+
+\textbf{Customer --- \code{my\_certs\_view}}: xem + tải cert của mình
+(\code{list\_certs\_for\_owner}, có chế độ remote qua Admin API).
+\textbf{\code{revoke\_request\_view}}: chọn cert active + lý do, gọi
+\code{submit\_revoke\_request}. \textbf{\code{view\_crl\_view}}: tra CRL công
+khai theo serial/CN qua \code{list\_crl\_entries} + \code{get\_published\_crl\_info}.
+
+%==============================================================================
+\section{Cần nắm để vấn đáp}
+%==============================================================================
+
+\begin{qabox}
+\textbf{Hỏi:} Trạng thái cert được lưu cứng trong DB hay suy ra động? Vì sao?\\[2pt]
+\textbf{Đáp:} Suy ra động trong \code{\_compute\_status}. DB chỉ lưu hai cột thô
+\code{revoked\_at} và \code{not\_valid\_after}; status \code{active}/
+\code{expired}/\code{revoked} được tính lại mỗi lần đọc. Lý do: \code{expired}
+phụ thuộc thời gian hiện tại, không có ``sự kiện hết hạn'' để ghi DB --- tính
+động luôn đúng, tránh dữ liệu lỗi thời.
+\end{qabox}
+
+\begin{qabox}
+\textbf{Hỏi:} CRL và OCSP khác nhau ra sao và bù nhau thế nào?\\[2pt]
+\textbf{Đáp:} CRL là \emph{danh sách} toàn bộ serial bị thu hồi do CA ký, phát
+hành định kỳ (\code{this\_update} $\to$ \code{next\_update}); client tải về một
+lần rồi tra offline --- ưu điểm là không cần online liên tục, nhược điểm là có
+độ trễ tới lần publish kế tiếp và file phình to. OCSP tra \emph{từng serial}
+theo thời gian thực, trả GOOD/REVOKED ngay --- ưu điểm tươi mới, nhược điểm là
+phụ thuộc responder online. Trong đồ án, OCSP DB cập nhật tức thì mỗi lần revoke
+(\code{sync\_ocsp\_db}), còn CRL chỉ đổi khi Publish --- minh hoạ đúng sự bù trừ
+giữa hai cơ chế.
+\end{qabox}
+
+\begin{qabox}
+\textbf{Hỏi:} Vì sao CRL phải được ký bằng Root CA?\\[2pt]
+\textbf{Đáp:} CRL là tuyên bố ``những cert này không còn tin cậy''. Nếu không
+ký, kẻ tấn công có thể giả mạo CRL rỗng để giấu việc một cert đã bị thu hồi,
+hoặc ngược lại đưa cert hợp lệ vào CRL để từ chối dịch vụ. Chữ ký của Root CA
+(\code{builder.sign(issuer\_key, SHA256)}) cho phép client xác minh CRL thật sự
+do CA phát hành và chưa bị sửa. OCSP DB JSON \emph{không ký} chỉ vì nó là kênh
+nội bộ phục vụ responder, không phát tán trực tiếp như CRL.
+\end{qabox}
+
+\begin{qabox}
+\textbf{Hỏi:} Mô tả luồng thu hồi hai phía (customer xin, admin duyệt).\\[2pt]
+\textbf{Đáp:} Customer gọi \code{submit\_revoke\_request} (có BOLA guard kiểm tra
+sở hữu, chặn cert đã revoked, chặn request pending trùng), tạo bản ghi
+\code{pending}. Admin mở queue, Approve gọi \code{approve\_revocation}: trong một
+transaction set request=\code{approved} và UPDATE \code{revoked\_at}, sau commit
+thì sync OCSP + publish CRL. Nếu cert đã revoke trước đó thì giữ nguyên thời
+điểm cũ. Admin cũng có thể Reject (lý do bắt buộc, append vào reason để giữ
+history).
+\end{qabox}
+
+\begin{qabox}
+\textbf{Hỏi:} \code{renew\_cert} khác ``reissue qua CSR mới'' ở điểm nào?\\[2pt]
+\textbf{Đáp:} Renew giữ nguyên \emph{subject + public key} của cert cũ, chỉ đổi
+serial + hiệu lực mới, ghi \code{renewed\_from\_id} để truy vết --- customer
+không phải gửi CSR lại. Reissue qua CSR là cấp một cert hoàn toàn mới (có thể
+khoá mới). Renew từ chối nếu cert cũ đã thu hồi, và \emph{không} tự revoke cert
+cũ (admin tự quyết).
+\end{qabox}
+
+\begin{qabox}
+\textbf{Hỏi:} Vòng đời các server hạ tầng được quản lý ra sao?\\[2pt]
+\textbf{Đáp:} \code{InfraManager} là singleton (lấy qua \code{get\_infra()}).
+Prod (8889/8888) auto-start lúc boot và chạy suốt đời app; Lab (9889/9888) start
+thủ công khi mở Verification Lab, stop khi đóng. Start idempotent nhờ guard
+\code{if self.\_prod\_crl is None}. \code{stop\_all} gọi shutdown + server\_close
+cả 4. OCSP có thể bật/tắt runtime qua state dict mutable.
+\end{qabox}
+
+\begin{qabox}
+\textbf{Hỏi:} Vì sao tách \code{ocsp\_db.json} và \code{crl.pem} thành hai nguồn?
+\\[2pt]
+\textbf{Đáp:} Để mô phỏng đúng thực tế PKI. \code{ocsp\_db.json} cập nhật tức thì
+mỗi revoke (không cần ký) nên OCSP luôn fresh; \code{crl.pem} chỉ đổi khi Publish
+(cần ký Root CA) nên có cửa sổ trễ. Màn \code{crl\_publish\_view} hiển thị diff
+giữa số serial trong DB và trong CRL để nhắc admin publish khi lệch.
+\end{qabox}
+
+\begin{warnbox}
+\textbf{Lưu ý dễ bị hỏi vặn.} \code{serial\_hex} trong DB là chuỗi hex, phải
+\code{int(serial\_hex, 16)} mới ra số để đưa vào CRL/OCSP. OCSP responder so
+sánh \code{serial\_int in revoked} với \code{revoked} là \code{set[int]} ---
+nếu lưu sai kiểu (str vs int) sẽ luôn trả GOOD nhầm. Hãy giải thích được điểm
+này.
+\end{warnbox}
+
+%==============================================================================
+\section{Test case và demo}
+%==============================================================================
+
+\subsection{Bảng test case chính}
+
+\begin{table}[h]
+\centering
+\footnotesize
+\begin{tabularx}{\linewidth}{L{3.4cm} X L{3.1cm}}
+\toprule
+\textbf{Test} & \textbf{Kịch bản} & \textbf{Kỳ vọng} \\
+\midrule
+\code{compute\_status active} & cert chưa revoke, còn hạn & status = \code{active} \\
+\addlinespace
+\code{compute\_status expired} & \code{not\_valid\_after} < now & status = \code{expired} \\
+\addlinespace
+\code{compute\_status revoked} & \code{revoked\_at} != NULL & status = \code{revoked} (ưu tiên) \\
+\addlinespace
+\code{revoke\_cert twice} & revoke 1 cert hai lần & lần 2 raise \code{CertLifecycleError} \\
+\addlinespace
+\code{renew\_cert} & renew cert active & cert mới, \code{renewed\_from\_id} đúng \\
+\addlinespace
+\code{renew revoked} & renew cert đã revoke & raise lỗi \\
+\addlinespace
+\code{submit BOLA} & customer xin revoke cert người khác & raise (không thuộc về bạn) \\
+\addlinespace
+\code{submit duplicate} & xin revoke khi đã có pending & raise (đã có request) \\
+\addlinespace
+\code{approve atomic} & approve request pending & request=approved + cert revoked \\
+\addlinespace
+\code{approve twice} & approve request đã approved & raise (status không pending) \\
+\addlinespace
+\code{publish\_crl} & có 2 cert revoked & CRL ký, \code{revoked\_count}=2 \\
+\addlinespace
+\code{OCSP GOOD/REVOKED} & tra serial chưa/đã revoke & trả GOOD / REVOKED \\
+\addlinespace
+\code{OCSP disabled} & set enabled=False rồi tra & HTTP 503 \\
+\addlinespace
+\code{infra idempotent} & gọi \code{start\_prod} 2 lần & chỉ 1 server, không lỗi \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{Đoạn unit test gợi ý}
+
+Test vòng đời + thu hồi (gợi ý cho \code{test\_m7\_cert\_lifecycle.py} và
+\code{test\_m8\_revocation\_crl.py}):
+
+\begin{Verbatim}
+def test_revoke_then_status_revoked(tmp_db):
+    cert = issue_sample_cert(tmp_db)
+    revoke_cert(cert["id"], admin_id=1, reason="key lộ", db_path=tmp_db)
+    detail = get_cert_detail(cert["id"], tmp_db)
+    assert detail["status"] == "revoked"
+    assert detail["revoked_at"] is not None
+
+def test_submit_bola_guard(tmp_db):
+    cert = issue_sample_cert(tmp_db, owner_id=10)
+    with pytest.raises(RevocationWorkflowError):
+        submit_revoke_request(cert["id"], requester_id=99,
+                              reason="x", db_path=tmp_db)  # không phải chủ
+
+def test_publish_crl_signs_with_root_ca(tmp_db):
+    cert = issue_sample_cert(tmp_db)
+    revoke_cert(cert["id"], 1, "r", tmp_db)
+    res = publish_crl(admin_id=1, db_path=tmp_db,
+                      crl_path=tmp_path/"crl.pem")
+    assert res["revoked_count"] == 1
+    crl = load_crl(tmp_path/"crl.pem")
+    assert crl.is_signature_valid(root_ca_public_key)
+\end{Verbatim}
+
+Test hạ tầng (gợi ý cho \code{test\_infra\_manager.py}):
+
+\begin{Verbatim}
+def test_start_prod_idempotent():
+    mgr = InfraManager()
+    mgr.start_prod_servers()
+    first = mgr._prod_crl
+    mgr.start_prod_servers()          # gọi lần 2
+    assert mgr._prod_crl is first     # không tạo server mới
+    mgr.stop_all()
+
+def test_ocsp_toggle_returns_503(ocsp_running):
+    server, state = ocsp_running
+    state["enabled"] = False
+    resp = http_get("http://localhost:8888/ocsp?serial=1")
+    assert resp.status == 503
+\end{Verbatim}
+
+\subsection{Kịch bản demo cho hội đồng}
+
+\begin{enumerate}
+  \item \textbf{Revoke + publish:} Admin mở Quản lý chứng nhận, chọn một cert
+    active, bấm Revoke (nhập lý do). Mở Cập nhật CRL: thấy diff ``DB có 1
+    revoked, CRL có 0''. Bấm \emph{Publish CRL Now} $\to$ CRL ký lại,
+    \code{revoked\_count}=1.
+  \item \textbf{Tra CRL/OCSP:} Customer mở Tra cứu CRL thấy serial vừa revoke.
+    Gọi \code{GET /ocsp?serial=<serial>} (trình duyệt hoặc curl) trả
+    \code{REVOKED}; tra một serial active trả \code{GOOD}.
+  \item \textbf{Luồng hai phía:} Customer mở Yêu cầu thu hồi, chọn cert active +
+    lý do, Gửi. Admin mở Duyệt yêu cầu thu hồi, Approve $\to$ cert revoked + CRL
+    tự publish (kiểm tra thông báo số serial).
+  \item \textbf{Giả lập OCSP down:} Trong Verification Lab, tắt OCSP (toggle
+    \code{enabled=False}); tra OCSP trả HTTP 503 --- minh hoạ vì sao cần CRL làm
+    phương án dự phòng khi responder gặp sự cố.
+\end{enumerate}
+
+\begin{notebox}
+\textbf{Lệnh chạy test.} Từ thư mục gốc dự án:
+\code{pytest tests/test\_m7\_cert\_lifecycle.py tests/test\_m8\_revocation\_crl.py
+tests/test\_infra\_manager.py -v}. Để demo OCSP bằng dòng lệnh:
+\code{curl "http://localhost:8888/ocsp?serial=12345"}.
+\end{notebox}
+
+%==============================================================================
+\section{Tích hợp vào chương trình chung}
+%==============================================================================
+
+Cụm này không đứng riêng mà ghép vào toàn hệ thống qua các điểm nối sau:
+
+\begin{itemize}
+  \item \textbf{Khởi động app:} \code{ui/app.py} gọi
+    \code{get\_infra().start\_prod\_servers()} lúc boot để CRL + OCSP server
+    Prod sẵn sàng phục vụ; khi thoát gọi \code{stop\_all()}.
+  \item \textbf{Phụ thuộc Root CA:} \code{publish\_crl} và \code{renew\_cert}
+    gọi \code{load\_active\_root\_ca\_with\_key} (module CA của thành viên khác).
+    Nếu chưa có Root CA, hai hàm raise lỗi rõ ràng để UI hiển thị.
+  \item \textbf{Nhúng URL vào cert:} khi cấp/renew cert, URL CRL + OCSP
+    (\code{prod\_crl\_url()}, \code{prod\_ocsp\_url()} từ \code{infra\_manager})
+    được nhúng vào extension CRL Distribution Points / AIA --- để khâu
+    \emph{chain validation} (phần việc Phạm Minh Quân) biết đi tra ở đâu.
+  \item \textbf{Audit log:} mọi hành động revoke/renew/approve/reject/publish đều
+    gọi \code{services.audit.write\_audit} với \code{Action} tương ứng
+    (\code{CERT\_REVOKED}, \code{CERT\_RENEWED}, \code{REVOKE\_APPROVED},
+    \code{CRL\_PUBLISHED}\ldots) --- ghép vào màn Audit chung.
+  \item \textbf{Chế độ remote:} các view Customer (\code{my\_certs},
+    \code{revoke\_request}, \code{view\_crl}) hỗ trợ gọi Admin API
+    (\code{remote\_csr\_client}) khi chạy tách máy Admin/Customer --- cùng một
+    logic nghiệp vụ nhưng qua HTTP.
+  \item \textbf{Cấu hình:} đường dẫn \code{PROD\_CRL\_PATH},
+    \code{PROD\_OCSP\_DB\_PATH} và port lấy từ \code{config.py} (cho phép override
+    qua biến môi trường để tránh xung đột port).
+\end{itemize}
+
+\begin{notebox}
+\textbf{Quan hệ với chain validation.} Đầu ra của cụm này (CRL đã ký phục vụ tại
+\code{/crl.pem} và OCSP responder tại \code{/ocsp}) chính là \emph{đầu vào} cho
+bước kiểm tra trạng thái thu hồi trong quy trình verify của Phạm Minh Quân. Hai
+phần ghép với nhau tạo thành vòng tin cậy đầy đủ: cấp $\to$ thu hồi $\to$ công bố
+$\to$ kiểm tra.
+\end{notebox}
+
+%==============================================================================
+\section{Bổ sung sau rà soát: các hàm/feature dễ bị hỏi}
+
+\begin{itemize}
+  \item \textbf{\code{unrevoke\_serial(serial, ocsp\_db\_path)} --- gỡ thu hồi.}
+        Đối xứng với \code{revoke\_serial\_ocsp\_only}: loại serial khỏi OCSP DB
+        (rollback, vd xóa server demo). Điểm nhấn: \emph{CRL KHÔNG tự đổi} --- phải
+        \emph{Publish CRL Now} mới đồng bộ. Đây là chiều ngược của lệch pha CRL vs
+        OCSP (OCSP cập nhật tức thì, CRL theo chu kỳ).
+  \item \textbf{Hai hàm liệt kê thu hồi song song.} \code{list\_pending\_revocations}
+        (hardcode \code{WHERE status='pending'}) là tiện ích queue thuần; nhưng UI
+        \code{revoke\_queue\_view} thực tế gọi \code{list\_all\_revocations(status=...)}
+        (mặc định pending) để combobox cho xem cả approved/rejected/all.
+  \item \textbf{Các API truy vấn trạng thái của \code{InfraManager}.} Ngoài
+        \code{set\_lab\_ocsp\_enabled}: \code{status()} trả dict 4 cờ để dashboard vẽ
+        badge; \code{is\_prod\_running}/\code{is\_lab\_running} chỉ True khi \emph{cả}
+        CRL$+$OCSP chạy; \code{get\_lab\_ocsp\_state} trả dict \emph{mutable} để Lab
+        bind \code{BooleanVar} toggle trực tiếp; \code{set\_prod\_ocsp\_enabled} toggle
+        Prod (chủ yếu cho test).
+  \item \textbf{BOLA guard tầng 2 --- \code{get\_cert\_detail(cert\_id, owner\_id=...)}}.
+        Khi customer xem chi tiết, truyền \code{owner\_id} $\Rightarrow$ thêm
+        \code{AND c.owner\_id = ?} và trả \code{None} nếu cert không thuộc về họ ---
+        chặn customer đoán \code{cert\_id} để xem/tải cert người khác (ngoài BOLA ở
+        \code{submit\_revoke\_request}).
+  \item \textbf{Cặp ghi-đọc serial trong \code{ocsp\_db.json}.} \code{save\_revoked\_list}
+        cố ý ghi serial dạng \emph{chuỗi} (\code{str(s)} --- JSON không an toàn cho
+        số nguyên rất lớn); \code{load\_revoked\_list} ép \code{int(s)} khi đọc. Cặp
+        đối xứng này là lý do so sánh \code{serial in revoked} (set \code{int}) luôn
+        đúng kiểu --- khép kín cảnh báo ``sai kiểu str/int luôn trả GOOD nhầm''.
+\end{itemize}
+
+%==============================================================================
+\section{Checklist chuẩn bị vấn đáp}
+%==============================================================================
+
+\begin{itemize}
+  \item[\textbf{$\square$}] Giải thích được vì sao status cert tính động, đọc
+    trôi chảy \code{\_compute\_status} và thứ tự ưu tiên revoked/expired/active.
+  \item[\textbf{$\square$}] Phân biệt rõ CRL vs OCSP: cơ chế, ưu/nhược, cách bù
+    nhau; chỉ ra trong code đâu là realtime (\code{sync\_ocsp\_db}) đâu là trễ
+    (\code{publish\_crl}).
+  \item[\textbf{$\square$}] Nói được vì sao CRL phải ký bằng Root CA và OCSP DB
+    thì không cần ký.
+  \item[\textbf{$\square$}] Vẽ lại luồng thu hồi hai phía và chỉ ra điểm atomic +
+    BOLA guard trong code.
+  \item[\textbf{$\square$}] Phân biệt \code{renew\_cert} (giữ subject + public
+    key) với reissue qua CSR mới; giải thích \code{renewed\_from\_id}.
+  \item[\textbf{$\square$}] Trình bày vòng đời 4 server, tính idempotent của
+    start, và cơ chế toggle OCSP qua state dict mutable.
+  \item[\textbf{$\square$}] Chạy được demo: revoke $\to$ publish $\to$ tra
+    CRL/OCSP $\to$ tắt OCSP giả lập down (HTTP 503).
+  \item[\textbf{$\square$}] Chạy được bộ test \code{test\_m7\_cert\_lifecycle},
+    \code{test\_m8\_revocation\_crl}, \code{test\_infra\_manager} và giải thích
+    từng assert.
+  \item[\textbf{$\square$}] Giải thích điểm nối với chain validation và lý do
+    nhúng URL CRL/OCSP vào cert lúc phát hành.
+  \item[\textbf{$\square$}] Trả lời được vì sao \code{serial\_hex} cần
+    \code{int(.., 16)} và rủi ro sai kiểu str/int trong so sánh OCSP.
+\end{itemize}
+
+\end{document}

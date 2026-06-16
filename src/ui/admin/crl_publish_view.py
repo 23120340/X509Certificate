@@ -12,6 +12,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 from ui.theme import font
+from ui.common import fmt_local
 from services.audit import write_audit, Action
 from services.crl_publish import (
     publish_crl, get_published_crl_info, snapshot_revoked_serials,
@@ -41,8 +42,11 @@ class CRLPublishFrame(ttk.Frame):
 
         self._build_current_info()
         self._build_pending_info()
-        self._build_crl_entries()
+        # Action bar pack TRƯỚC bảng entries (vốn fill=BOTH+expand). Nếu pack
+        # sau, bảng revoke list giãn hết chỗ và đẩy nút "Publish CRL Now" ra
+        # ngoài vùng nhìn → nút "biến mất" sau khi CRL có entries.
         self._build_actions()
+        self._build_crl_entries()
         self.refresh()
 
     def _build_current_info(self) -> None:
@@ -87,8 +91,10 @@ class CRLPublishFrame(ttk.Frame):
         vsb.pack(side=tk.RIGHT, fill=tk.Y)
 
     def _build_actions(self) -> None:
+        # side=BOTTOM + pack trước bảng entries → nút luôn được giữ chỗ ở đáy,
+        # không bị bảng revoke list (expand) đẩy ra khỏi vùng nhìn.
         bar = ttk.Frame(self)
-        bar.pack(fill=tk.X, pady=(16, 0))
+        bar.pack(side=tk.BOTTOM, fill=tk.X, pady=(12, 0))
         ttk.Button(bar, text="📢 Publish CRL Now",
                    command=self.on_publish).pack(side=tk.LEFT)
         ttk.Button(bar, text="Refresh",
@@ -123,6 +129,8 @@ class CRLPublishFrame(ttk.Frame):
                 val = info[key]
                 if key == "file_size":
                     val = f"{val} bytes"
+                elif key in ("this_update", "next_update"):
+                    val = fmt_local(val)
                 ttk.Label(row, text=str(val)).pack(side=tk.LEFT)
 
         # Pending: snapshot từ DB
@@ -172,7 +180,7 @@ class CRLPublishFrame(ttk.Frame):
                     e["serial_hex"][:48] + ("..." if len(e["serial_hex"]) > 48 else ""),
                     e["common_name"] or "-",
                     e["owner_username"] or "-",
-                    e["revocation_date"][:19].replace("T", " "),
+                    fmt_local(e["revocation_date"]),
                 ),
             )
 
@@ -202,8 +210,8 @@ class CRLPublishFrame(ttk.Frame):
             "Đã publish",
             f"CRL đã ghi vào:\n{result['crl_path']}\n\n"
             f"  • {result['revoked_count']} serial revoked\n"
-            f"  • this_update = {result['this_update']}\n"
-            f"  • next_update = {result['next_update']}\n\n"
+            f"  • this_update = {fmt_local(result['this_update'])}\n"
+            f"  • next_update = {fmt_local(result['next_update'])}\n\n"
             f"OCSP DB đã sync: {result['ocsp_db_path']}",
         )
         self.refresh()

@@ -31,7 +31,7 @@ from core.csr import parse_csr, verify_csr_signature
 from db.connection import conn_scope, transaction
 from services.ca_admin import load_active_root_ca_with_key, CAError
 from services.infra_manager import prod_crl_url, prod_ocsp_url
-from services.system_config import get_config
+from services.system_config import get_config, get_hash_algorithm
 
 
 # Default URLs cho CRL Distribution Points + AIA OCSP trong cert phát hành.
@@ -212,6 +212,7 @@ def approve_csr(
         csr_obj, ca_cert, ca_key,
         validity_days=validity_days,
         ocsp_url=ocsp_url, crl_url=crl_url,
+        hash_algorithm=get_hash_algorithm(db_path),
     )
     cert_pem = cert.public_bytes(serialization.Encoding.PEM)
 

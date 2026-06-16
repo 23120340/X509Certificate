@@ -25,12 +25,14 @@ from typing import Optional
 
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization
+from cryptography.exceptions import InvalidSignature
 
+from core import keyalg
 from core.cert_builder import reissue_cert_for_renewal
 from db.connection import conn_scope, transaction
 from services.ca_admin import load_active_root_ca_with_key, CAError
-from services.crl_publish import DEFAULT_OCSP_DB_PATH, sync_ocsp_db
-from services.system_config import get_config
+from services.crl_publish import DEFAULT_OCSP_DB_PATH, sync_ocsp_db, publish_crl
+from services.system_config import get_config, get_hash_algorithm
 
 
 VALID_STATUS_FILTERS = ("active", "expired", "revoked", "all")
@@ -199,26 +201,24 @@ def renew_cert(
     crl_url:  "str | None" = None,
 ) -> dict:
     """
-    Phát hành cert MỚI giữ nguyên subject + public_key của cert cũ.
-    Cert cũ KHÔNG bị revoke tự động — admin có thể revoke riêng nếu cần.
+    GIA HẠN cert TẠI CHỖ (in-place): ký lại CHÍNH chứng chỉ đó với thời hạn
+    validity MỚI, GIỮ NGUYÊN record (cùng id), subject, public key và các
+    extensions. KHÔNG tạo thêm một cert mới.
 
-    URLs mặc định lấy từ services.infra_manager.prod_* (tự khớp env override).
+    Lưu ý X.509: serial number bắt buộc duy nhất, nên cert sau khi ký lại sẽ
+    có SERIAL MỚI và chữ ký mới của Root CA active — nhưng với hệ thống vẫn là
+    "cùng một chứng chỉ" (cùng id + cùng định danh + public key).
+
+    Hàm băm chữ ký lấy theo system_config. ocsp_url/crl_url mặc định None →
+    giữ nguyên CRLDP/AIA của cert cũ (chỉ ghi đè nếu caller truyền URL mới).
 
     Raise CertLifecycleError nếu:
       • cert_id không tồn tại
-      • cert cũ đã revoked (renew cert đã thu hồi vô nghĩa)
+      • cert đã revoked (gia hạn cert đã thu hồi vô nghĩa)
       • chưa có Root CA active
     """
     if validity_days < 1:
         raise CertLifecycleError("validity_days phải >= 1.")
-
-    # Resolve default URLs runtime
-    if ocsp_url is None or crl_url is None:
-        from services.infra_manager import prod_crl_url, prod_ocsp_url
-        if ocsp_url is None:
-            ocsp_url = get_config("prod_ocsp_url", db_path) or prod_ocsp_url()
-        if crl_url is None:
-            crl_url = get_config("prod_crl_url", db_path) or prod_crl_url()
 
     old = get_cert_detail(cert_id, db_path)
     if old is None:
@@ -240,6 +240,7 @@ def renew_cert(
         old_cert_obj, ca_cert, ca_key,
         validity_days=validity_days,
         ocsp_url=ocsp_url, crl_url=crl_url,
+        hash_algorithm=get_hash_algorithm(db_path),
     )
     cert_pem = new_cert.public_bytes(serialization.Encoding.PEM)
 
@@ -253,28 +254,136 @@ def renew_cert(
     now = datetime.now(timezone.utc).isoformat()
     serial_hex = f"{new_serial:x}"
 
+    # Cập nhật TẠI CHỖ — cùng record, không INSERT row mới.
     with transaction(db_path) as conn:
-        cur = conn.execute(
-            "INSERT INTO issued_certs "
-            "(csr_request_id, owner_id, serial_hex, common_name, cert_pem, "
-            " not_valid_before, not_valid_after, issued_at, issued_by, "
-            " renewed_from_id) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (old["csr_request_id"], old["owner_id"], serial_hex,
-             old["common_name"], cert_pem, nb, na, now, admin_id, cert_id),
+        conn.execute(
+            "UPDATE issued_certs SET serial_hex = ?, cert_pem = ?, "
+            "not_valid_before = ?, not_valid_after = ?, issued_at = ?, "
+            "issued_by = ? WHERE id = ?",
+            (serial_hex, cert_pem, nb, na, now, admin_id, cert_id),
         )
-        new_id = cur.lastrowid
+
+    return get_cert_detail(cert_id, db_path)
+
+
+# ── Re-issue toàn bộ dưới Root CA active (A.x — đổi/active CA) ────────────────
+
+def _signed_by(cert, ca_public_key, ca_subject) -> bool:
+    """True nếu `cert` được CA (subject + public key) này ký hợp lệ."""
+    if cert.issuer != ca_subject:
+        return False
+    try:
+        keyalg.verify_with_public_key(
+            ca_public_key, cert.signature,
+            cert.tbs_certificate_bytes, cert.signature_hash_algorithm,
+        )
+        return True
+    except InvalidSignature:
+        return False
+    except Exception:
+        return False
+
+
+def reissue_all_under_active_ca(
+    admin_id: int, db_path: str,
+    ocsp_db_path: "str | None" = DEFAULT_OCSP_DB_PATH,
+) -> dict:
+    """
+    Cấp lại TOÀN BỘ chứng chỉ đang còn hiệu lực dưới Root CA ĐANG ACTIVE.
+
+    Dùng sau khi tạo / đổi (rotate) Root CA: các cert cũ vẫn mang chữ ký của
+    CA cũ nên client FAIL verify. Hàm này, với mỗi cert active (chưa revoked,
+    chưa hết hạn) mà CHƯA do CA active ký:
+      1. Ký lại bằng CA active — giữ subject + public key + extensions, GIỮ
+         nguyên hạn hết hạn ban đầu → INSERT cert mới (renewed_from_id = cũ).
+      2. Thu hồi cert cũ với lý do 'superseded'.
+    Sau cùng: publish CRL mới (ký bởi CA active) + đồng bộ OCSP, để cert cũ
+    hiển thị đã thu hồi.
+
+    Idempotent: bỏ qua cert đã do CA active ký (chạy lại không nhân đôi),
+    cert đã revoked, cert đã hết hạn.
+
+    Trả về dict {total, reissued, revoked, skipped, crl}.
+    """
+    try:
+        ca_cert, ca_key = load_active_root_ca_with_key(db_path)
+    except CAError as e:
+        raise CertLifecycleError(
+            f"Không cấp lại được: {e} Tạo Root CA trước."
+        ) from e
+
+    hash_algo = get_hash_algorithm(db_path)
+    from services.infra_manager import prod_crl_url, prod_ocsp_url
+    ocsp_url = get_config("prod_ocsp_url", db_path) or prod_ocsp_url()
+    crl_url  = get_config("prod_crl_url", db_path) or prod_crl_url()
+
+    active_pub = ca_cert.public_key()
+    active_subject = ca_cert.subject
+
+    actives = list_all_certs(db_path, status="active")
+    now_dt = datetime.now(timezone.utc)
+    now_iso = now_dt.isoformat()
+
+    to_write = []   # (old_id, owner_id, csr_req, cn, cert_pem, nb, na, serial_hex)
+    skipped = 0
+    for r in actives:
+        detail = get_cert_detail(r["id"], db_path)
+        if detail is None:
+            continue
+        old_cert = x509.load_pem_x509_certificate(bytes(detail["cert_pem"]))
+        if _signed_by(old_cert, active_pub, active_subject):
+            skipped += 1   # đã do CA active ký — bỏ qua (idempotent)
+            continue
+        try:
+            na_old = old_cert.not_valid_after_utc
+        except AttributeError:
+            na_old = old_cert.not_valid_after.replace(tzinfo=timezone.utc)
+        remaining_days = max(1, (na_old - now_dt).days)  # giữ nguyên hạn cũ
+        new_cert, new_serial = reissue_cert_for_renewal(
+            old_cert, ca_cert, ca_key,
+            validity_days=remaining_days,
+            ocsp_url=ocsp_url, crl_url=crl_url,
+            hash_algorithm=hash_algo,
+        )
+        cert_pem = new_cert.public_bytes(serialization.Encoding.PEM)
+        try:
+            nb = new_cert.not_valid_before_utc.isoformat()
+            na = new_cert.not_valid_after_utc.isoformat()
+        except AttributeError:
+            nb = new_cert.not_valid_before.replace(tzinfo=timezone.utc).isoformat()
+            na = new_cert.not_valid_after.replace(tzinfo=timezone.utc).isoformat()
+        to_write.append((
+            detail["id"], detail["owner_id"], detail["csr_request_id"],
+            detail["common_name"], cert_pem, nb, na, f"{new_serial:x}",
+        ))
+
+    with transaction(db_path) as conn:
+        for (old_id, owner_id, csr_req, cn, cert_pem, nb, na, serial_hex) in to_write:
+            conn.execute(
+                "INSERT INTO issued_certs "
+                "(csr_request_id, owner_id, serial_hex, common_name, cert_pem, "
+                " not_valid_before, not_valid_after, issued_at, issued_by, "
+                " renewed_from_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (csr_req, owner_id, serial_hex, cn, cert_pem,
+                 nb, na, now_iso, admin_id, old_id),
+            )
+            conn.execute(
+                "UPDATE issued_certs SET revoked_at = ?, revocation_reason = ? "
+                "WHERE id = ? AND revoked_at IS NULL",
+                (now_iso, "superseded — re-issued under active Root CA", old_id),
+            )
+
+    reissued = len(to_write)
+    crl_info = None
+    if reissued > 0:
+        # CRL mới ký bởi CA active, snapshot toàn bộ revoked (gồm cert vừa thu hồi).
+        crl_info = publish_crl(admin_id, db_path, ocsp_db_path=ocsp_db_path)
 
     return {
-        "id":                new_id,
-        "csr_request_id":    old["csr_request_id"],
-        "owner_id":          old["owner_id"],
-        "serial_hex":        serial_hex,
-        "common_name":       old["common_name"],
-        "not_valid_before":  nb,
-        "not_valid_after":   na,
-        "issued_at":         now,
-        "issued_by":         admin_id,
-        "renewed_from_id":   cert_id,
-        "status":            "active",
+        "total":    len(actives),
+        "reissued": reissued,
+        "revoked":  reissued,
+        "skipped":  skipped,
+        "crl":      crl_info,
     }

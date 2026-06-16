@@ -11,6 +11,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 from ui.theme import font
+from ui.common import fmt_local
 from ui.widgets.modal import init_modal, make_button_row
 from services.audit import write_audit, Action
 from services.revocation_workflow import (
@@ -120,7 +121,7 @@ class RevokeQueueFrame(ttk.Frame):
                     r.get("common_name") or "—",
                     (r["reason"] or "")[:60],
                     r["status"],
-                    r["submitted_at"][:19].replace("T", " "),
+                    fmt_local(r["submitted_at"]),
                 ),
                 tags=(r["status"],),
             )
@@ -147,11 +148,11 @@ class RevokeQueueFrame(ttk.Frame):
             f"(serial {rec.get('serial_hex', '?')[:24]}…)\n"
             f"Domain:         {rec.get('common_name') or '—'}\n"
             f"Requester:      {rec.get('requester_username') or rec['requester_id']}\n"
-            f"Submitted at:   {rec['submitted_at']}\n"
+            f"Submitted at:   {fmt_local(rec['submitted_at'])}\n"
             f"Status:         {rec['status']}\n"
-            + (f"Reviewed at:    {rec['reviewed_at']}\n" if rec.get('reviewed_at') else "")
+            + (f"Reviewed at:    {fmt_local(rec['reviewed_at'])}\n" if rec.get('reviewed_at') else "")
             + (f"Reviewed by:    uid={rec['reviewed_by']}\n" if rec.get('reviewed_by') else "")
-            + (f"Cert revoked:   {rec['cert_revoked_at']}\n" if rec.get('cert_revoked_at') else "")
+            + (f"Cert revoked:   {fmt_local(rec['cert_revoked_at'])}\n" if rec.get('cert_revoked_at') else "")
             + f"\nReason:\n{rec.get('reason') or '—'}"
         )
         messagebox.showinfo(f"Request #{req_id}", info)

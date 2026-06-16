@@ -431,9 +431,14 @@ class App:
                 peer_address=peer_address,
             )
 
+            # Các bước đã được stream chi tiết ở trên — chỉ tóm tắt 1 dòng,
+            # không liệt kê lại từng bước (tránh trùng lặp).
+            n_pass = sum(1 for _, ok, _ in results if ok)
             self._thread_log("╚══════════════ KẾT QUẢ ══════════════╝")
-            for step_name, ok, _ in results:
-                self._thread_log(f"   [{'PASS' if ok else 'FAIL'}] {step_name}")
+            self._thread_log(
+                f"   Tổng kết: {'HỢP LỆ ✓' if overall else 'KHÔNG HỢP LỆ ✗'} "
+                f"({n_pass}/{len(results)} bước PASS)"
+            )
 
             self.root.after(0, self.set_result, "pass" if overall else "fail")
             self.root.after(0, self._display_cert, cert_obj, entry)

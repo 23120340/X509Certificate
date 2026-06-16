@@ -7,7 +7,8 @@ Bao trùm:
   • list_all / list_for_owner (BOLA guard)
   • _compute_status: active / expired / revoked
   • revoke_cert happy + reason required + double-revoke blocked
-  • renew_cert happy: cert mới có cùng public key + subject + renewed_from_id
+  • renew_cert happy (in-place): cùng record/id, serial mới, validity gia hạn,
+    giữ public key + subject + SAN
   • renew_cert khi cert đã revoked → error
   • renew_cert khi chưa có Root CA → error
   • get_cert_detail ownership: customer chỉ xem được cert của mình
@@ -168,6 +169,8 @@ def test_revoke_cert_happy():
 
 
 def test_renew_cert_happy():
+    """Renew IN-PLACE: cùng record (cùng id), serial mới, validity gia hạn,
+    giữ public key + subject + SAN, KHÔNG sinh thêm cert."""
     env = TestEnv()
     try:
         old_id = env.issue_cert(env.alice_id, "renew.com",
@@ -175,19 +178,21 @@ def test_renew_cert_happy():
         old = get_cert_detail(old_id, env.db_path)
 
         new = renew_cert(old_id, env.admin_id, 730, env.db_path)
-        assert new["id"] != old_id
-        assert new["renewed_from_id"] == old_id
+        # In-place: cùng record, không tạo cert mới
+        assert new["id"] == old_id
         assert new["common_name"] == old["common_name"]
         assert new["owner_id"] == old["owner_id"]
+        # Ký lại → serial mới + validity gia hạn
         assert new["serial_hex"] != old["serial_hex"]
+        assert new["not_valid_after"] > old["not_valid_after"]
+        assert new["status"] == "active"
+        assert new["revoked_at"] is None
 
-        # Cert cũ KHÔNG bị revoke tự động
-        old_after = get_cert_detail(old_id, env.db_path)
-        assert old_after["revoked_at"] is None
-        assert old_after["status"] == "active"
+        # Không sinh thêm row — DB vẫn chỉ có đúng 1 cert
+        assert len(list_all_certs(env.db_path)) == 1
 
-        # Cert mới có cùng public key + subject + SAN
-        new_full = get_cert_detail(new["id"], env.db_path)
+        # Cùng public key + subject + SAN
+        new_full = get_cert_detail(old_id, env.db_path)
         old_cert = x509.load_pem_x509_certificate(bytes(old["cert_pem"]))
         new_cert = x509.load_pem_x509_certificate(bytes(new_full["cert_pem"]))
         assert (
@@ -204,13 +209,13 @@ def test_renew_cert_happy():
         ).value.get_values_for_type(x509.DNSName)
         assert set(old_san) == set(new_san), "SAN phải giống"
 
-        # Cert mới ký bởi Root CA — verify
+        # Cert sau khi ký lại verify bởi Root CA
         ca_cert, _ = load_active_root_ca_with_key(env.db_path)
         ca_cert.public_key().verify(
             new_cert.signature, new_cert.tbs_certificate_bytes,
             padding.PKCS1v15(), new_cert.signature_hash_algorithm,
         )
-        print("  [renew-happy] PASS ✓ — cert mới giữ public key + subject + SAN, ký Root CA verify OK")
+        print("  [renew-happy] PASS ✓ — renew in-place: cùng id, serial mới, validity gia hạn, giữ public key + subject + SAN")
     finally:
         env.cleanup()
 
@@ -275,20 +280,24 @@ def test_get_cert_detail_ownership():
 
 
 def test_renew_then_renew_chain():
-    """Renew nhiều lần → chain renewed_from_id chính xác."""
+    """Renew nhiều lần trên cùng cert → vẫn 1 record, serial đổi mỗi lần."""
     env = TestEnv()
     try:
         c1 = env.issue_cert(env.alice_id, "chain.com")
-        c2 = renew_cert(c1, env.admin_id, 365, env.db_path)["id"]
-        c3 = renew_cert(c2, env.admin_id, 365, env.db_path)["id"]
+        s0 = get_cert_detail(c1, env.db_path)["serial_hex"]
 
-        r3 = get_cert_detail(c3, env.db_path)
-        r2 = get_cert_detail(c2, env.db_path)
-        r1 = get_cert_detail(c1, env.db_path)
-        assert r3["renewed_from_id"] == c2
-        assert r2["renewed_from_id"] == c1
-        assert r1["renewed_from_id"] is None
-        print("  [renew-chain] PASS ✓ — chain renewed_from_id chính xác qua 3 lần renew")
+        r1 = renew_cert(c1, env.admin_id, 365, env.db_path)
+        assert r1["id"] == c1
+        s1 = r1["serial_hex"]
+        assert s1 != s0
+
+        r2 = renew_cert(c1, env.admin_id, 365, env.db_path)
+        assert r2["id"] == c1
+        assert r2["serial_hex"] != s1
+
+        # Renew in-place không bao giờ sinh thêm row
+        assert len(list_all_certs(env.db_path)) == 1
+        print("  [renew-in-place] PASS ✓ — renew nhiều lần cùng 1 record, serial đổi mỗi lần")
     finally:
         env.cleanup()
 

@@ -36,20 +36,26 @@ class Action:
     CONFIG_UPDATED     = "config_updated"
 
     # Root CA
-    ROOT_CA_CREATED    = "root_ca_created"
-    ROOT_CA_ROTATED    = "root_ca_rotated"
+    ROOT_CA_CREATED        = "root_ca_created"
+    ROOT_CA_ROTATED        = "root_ca_rotated"
+    ROOT_CA_PUBKEY_EXPORTED = "root_ca_pubkey_exported"
+    TRUST_STORE_PUBLISHED  = "trust_store_published"
+    CA_REISSUE_ALL         = "ca_reissue_all"
 
     # Customer keys
     KEY_GENERATED      = "key_generated"
+    KEY_DELETED        = "key_deleted"
 
     # CSR workflow
     CSR_SUBMITTED      = "csr_submitted"
     CSR_APPROVED       = "csr_approved"
     CSR_REJECTED       = "csr_rejected"
+    CSR_CANCELLED      = "csr_cancelled"
 
     # Cert lifecycle
     CERT_ISSUED        = "cert_issued"
     CERT_RENEWED       = "cert_renewed"
+    CERT_REISSUED      = "cert_reissued"
     CERT_REVOKED       = "cert_revoked"
 
     # Revocation workflow
@@ -62,6 +68,7 @@ class Action:
 
     # External cert
     EXTERNAL_UPLOADED  = "external_cert_uploaded"
+    EXTERNAL_DELETED   = "external_cert_deleted"
 
 
 def write_audit(

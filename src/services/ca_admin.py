@@ -23,10 +23,10 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from cryptography import x509
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives import serialization
 from cryptography.x509.oid import NameOID
 
+from core import keyalg
 from core.encryption import encrypt_blob, decrypt_blob
 from db.connection import conn_scope, transaction
 
@@ -41,14 +41,19 @@ class CAError(Exception):
 
 # ── Crypto: sinh Root CA (cert + key) ────────────────────────────────────────
 
-def _generate_root_ca(common_name: str, key_size: int, validity_days: int):
+def _generate_root_ca(common_name: str, key_size: int, validity_days: int,
+                      algorithm=None, hash_algorithm=None):
     """
     Sinh Root CA self-signed mới. Không lưu disk hay DB — caller xử lý.
+
+    `algorithm` (spec string, vd 'EC-P384' / 'Ed25519') chọn loại khóa; None →
+    RSA với `key_size`. `hash_algorithm` chọn hàm băm chữ ký (bỏ qua nếu Ed25519).
 
     BasicConstraints(ca=True, path_length=0) → Root CA chỉ ký end-entity cert,
     không ký intermediate. Giữ nhất quán với issuer.py legacy.
     """
-    key = rsa.generate_private_key(public_exponent=65537, key_size=key_size)
+    spec = algorithm or f"RSA-{key_size}"
+    key = keyalg.generate_key(spec)
 
     subject = issuer = x509.Name([
         x509.NameAttribute(NameOID.COUNTRY_NAME,      "VN"),
@@ -81,7 +86,7 @@ def _generate_root_ca(common_name: str, key_size: int, validity_days: int):
             x509.SubjectKeyIdentifier.from_public_key(key.public_key()),
             critical=False,
         )
-        .sign(key, hashes.SHA256())
+        .sign(key, keyalg.signing_algorithm(key, hash_algorithm))
     )
     return cert, key
 
@@ -113,26 +118,48 @@ def create_root_ca(
     validity_days: int,
     created_by: int,
     db_path: str,
+    algorithm: "str | None" = None,
+    hash_name: "str | None" = None,
 ) -> dict:
     """
     Sinh Root CA mới + lưu encrypted vào bảng `root_ca`. Atomic:
       • Set is_active=0 cho mọi row cũ.
       • INSERT row mới với is_active=1.
-    Trả về dict metadata (không có private key).
-    Raise CAError nếu input không hợp lệ.
+
+    `algorithm` (spec 'RSA-2048'/'EC-P256'/'EC-P384'/'Ed25519'…) chọn loại
+    khóa; None → RSA với `key_size`. `hash_name` ('SHA256'/'SHA-384'…) chọn
+    hàm băm chữ ký; None → lấy từ system_config. Với Ed25519 hàm băm bị BỎ QUA
+    (khóa Ed có hàm băm cố định bên trong). Trả về dict metadata (không private
+    key). Raise CAError nếu input sai.
     """
+    from services.system_config import get_hash_algorithm
+
     if not common_name or not common_name.strip():
         raise CAError("common_name không được rỗng.")
     common_name = common_name.strip()
-    if key_size not in ALLOWED_KEY_SIZES:
+    if algorithm is None:
+        if key_size not in ALLOWED_KEY_SIZES:
+            raise CAError(
+                f"key_size không hợp lệ: {key_size}. "
+                f"Chọn 1 trong {ALLOWED_KEY_SIZES}."
+            )
+    elif algorithm not in keyalg.ALGO_CHOICES:
         raise CAError(
-            f"key_size không hợp lệ: {key_size}. "
-            f"Chọn 1 trong {ALLOWED_KEY_SIZES}."
+            f"Thuật toán không hợp lệ: {algorithm}. "
+            f"Chọn 1 trong {keyalg.ALGO_CHOICES}."
         )
     if validity_days < 1:
         raise CAError("validity_days phải >= 1.")
 
-    cert, key = _generate_root_ca(common_name, key_size, validity_days)
+    hash_algo = (keyalg.hash_from_name(hash_name) if hash_name
+                 else get_hash_algorithm(db_path))
+    try:
+        cert, key = _generate_root_ca(
+            common_name, key_size, validity_days,
+            algorithm=algorithm, hash_algorithm=hash_algo,
+        )
+    except keyalg.KeyAlgError as e:
+        raise CAError(str(e)) from e
     cert_pem = cert.public_bytes(serialization.Encoding.PEM)
     key_pem  = _serialize_private_key_pem(key)
 
@@ -166,7 +193,8 @@ def create_root_ca(
         "created_at":       created_at,
         "created_by":       created_by,
         "is_active":        1,
-        "key_size":         key_size,
+        "algorithm":        keyalg.algorithm_label(key),
+        "key_size":         keyalg.key_size_for(key),
         "validity_days":    validity_days,
     }
 
@@ -216,6 +244,44 @@ def load_active_root_ca_with_key(db_path: str):
     )
     key = serialization.load_pem_private_key(key_pem, password=None)
     return cert, key
+
+
+def get_active_root_ca_public_key_pem(db_path: str) -> "Optional[bytes]":
+    """
+    PEM (SubjectPublicKeyInfo) của PUBLIC KEY Root CA active.
+
+    Đây là phần CÔNG KHAI của Root CA — có thể xuất ra ngoài cho client/đối
+    tác để họ verify chữ ký cert/CRL. KHÔNG decrypt private key.
+    Trả về None nếu chưa có Root CA active.
+    """
+    ca = get_active_root_ca(db_path)
+    if ca is None:
+        return None
+    cert = x509.load_pem_x509_certificate(bytes(ca["cert_pem"]))
+    return cert.public_key().public_bytes(
+        serialization.Encoding.PEM,
+        serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+
+
+def get_active_root_ca_spki_sha256(db_path: str) -> "Optional[str]":
+    """
+    SPKI SHA-256 fingerprint của Root CA active, dạng hex 'AA:BB:CC…'.
+
+    Fingerprint băm trên SubjectPublicKeyInfo (DER) — định danh ổn định cho
+    public key, dùng để client pin/đối chiếu. Trả về None nếu chưa có CA active.
+    """
+    import hashlib
+    ca = get_active_root_ca(db_path)
+    if ca is None:
+        return None
+    cert = x509.load_pem_x509_certificate(bytes(ca["cert_pem"]))
+    spki_der = cert.public_key().public_bytes(
+        serialization.Encoding.DER,
+        serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    digest = hashlib.sha256(spki_der).hexdigest().upper()
+    return ":".join(digest[i:i + 2] for i in range(0, len(digest), 2))
 
 
 def publish_active_to_trust_store(db_path: str, trust_store_dir: str

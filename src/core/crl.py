@@ -15,12 +15,26 @@ from datetime import datetime, timedelta, timezone
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 
+from core import keyalg
+
 
 # ── Xây dựng và lưu CRL ──────────────────────────────────────────────────────
 
-def build_crl(issuer_cert, issuer_key, revoked_serials, validity_days: int = 7):
-    """Tạo CRL ký bởi issuer_key. revoked_serials là list[int]."""
+def build_crl(issuer_cert, issuer_key, revoked_serials, validity_days: int = 7,
+              hash_algorithm=None, revocation_dates=None):
+    """
+    Tạo CRL ký bởi issuer_key. revoked_serials là list[int].
+
+    `hash_algorithm` (HashAlgorithm hoặc None) cho phép cấu hình hàm băm chữ
+    ký CRL; với khóa Ed25519 sẽ tự bỏ qua hash.
+
+    `revocation_dates` (dict[int, datetime] | None): NGÀY THU HỒI THỰC của từng
+    serial (lấy từ issued_certs.revoked_at). Serial nào không có trong dict →
+    fallback dùng `now` (thời điểm build CRL). Nhờ vậy mỗi entry giữ đúng mốc
+    thu hồi của nó, không bị đặt lại theo thời điểm publish.
+    """
     now = datetime.now(timezone.utc)
+    revocation_dates = revocation_dates or {}
     builder = (
         x509.CertificateRevocationListBuilder()
         .issuer_name(issuer_cert.subject)
@@ -28,14 +42,18 @@ def build_crl(issuer_cert, issuer_key, revoked_serials, validity_days: int = 7):
         .next_update(now + timedelta(days=validity_days))
     )
     for serial in revoked_serials:
+        s = int(serial)
         revoked = (
             x509.RevokedCertificateBuilder()
-            .serial_number(int(serial))
-            .revocation_date(now)
+            .serial_number(s)
+            .revocation_date(revocation_dates.get(s, now))
             .build()
         )
         builder = builder.add_revoked_certificate(revoked)
-    return builder.sign(private_key=issuer_key, algorithm=hashes.SHA256())
+    return builder.sign(
+        private_key=issuer_key,
+        algorithm=keyalg.signing_algorithm(issuer_key, hash_algorithm),
+    )
 
 
 def save_crl(crl, crl_path: str):

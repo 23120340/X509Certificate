@@ -13,14 +13,13 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 from ui.theme import font
+from ui.common import fmt_local
 from ui.widgets.modal import fit_to_content
 from services.customer_keys import (
     generate_keypair, list_keys, get_key_meta, delete_key, CustomerKeyError,
 )
 from services.audit import write_audit, Action
-
-
-KEY_SIZE_OPTIONS = ("2048", "3072", "4096")
+from core.keyalg import ALGO_CHOICES
 
 
 class MyKeysFrame(ttk.Frame):
@@ -83,7 +82,7 @@ class MyKeysFrame(ttk.Frame):
                     k["id"],
                     k["name"] + (" (LAN public-only)" if k.get("is_public_only") else ""),
                     k["algorithm"], k["key_size"],
-                    k["created_at"][:19].replace("T", " "),
+                    fmt_local(k["created_at"]),
                 ),
             )
 
@@ -126,6 +125,11 @@ class MyKeysFrame(ttk.Frame):
         except CustomerKeyError as e:
             messagebox.showerror("Không xóa được", str(e))
             return
+        write_audit(
+            self.app.db_path, self.app.session["id"], Action.KEY_DELETED,
+            target_type="customer_key", target_id=str(key_id),
+            details={"name": meta["name"]},
+        )
         self.refresh()
 
 
@@ -152,21 +156,21 @@ class GenerateKeypairDialog(tk.Toplevel):
         self.name_entry.grid(row=0, column=1, pady=6, padx=4, sticky="ew")
         self.name_entry.insert(0, "key-1")
 
-        ttk.Label(frame, text="Key size:").grid(
+        ttk.Label(frame, text="Thuật toán:").grid(
             row=1, column=0, sticky="e", pady=6, padx=4
         )
-        self.key_size_var = tk.StringVar(value="2048")
-        ks_box = ttk.Frame(frame)
-        ks_box.grid(row=1, column=1, sticky="w", pady=6)
-        for ks in KEY_SIZE_OPTIONS:
-            ttk.Radiobutton(
-                ks_box, text=ks, value=ks, variable=self.key_size_var,
-            ).pack(side=tk.LEFT, padx=(0, 8))
+        self.algo_var = tk.StringVar(value="RSA-2048")
+        ttk.Combobox(
+            frame, textvariable=self.algo_var, values=list(ALGO_CHOICES),
+            state="readonly", width=16,
+        ).grid(row=1, column=1, sticky="w", pady=6)
 
         ttk.Label(
             frame,
-            text="Lưu ý: sinh key 4096 có thể mất vài giây.",
-            foreground="#888", font=font("caption"),
+            text=("RSA: tương thích rộng. EC (P-256/P-384): khóa nhỏ, ký "
+                  "nhanh. Ed25519: hiện đại. Sinh RSA-4096 có thể mất vài giây."),
+            foreground="#888", font=font("caption"), wraplength=340,
+            justify=tk.LEFT,
         ).grid(row=2, column=0, columnspan=2, pady=(8, 0), padx=4, sticky="w")
 
         btn_row = ttk.Frame(frame)
@@ -186,16 +190,12 @@ class GenerateKeypairDialog(tk.Toplevel):
 
     def on_submit(self) -> None:
         name = self.name_entry.get().strip()
-        try:
-            key_size = int(self.key_size_var.get())
-        except ValueError:
-            messagebox.showerror("Lỗi", "Key size không hợp lệ.")
-            return
+        spec = self.algo_var.get().strip()
         try:
             self.config(cursor="watch")
             self.update_idletasks()
             kp = generate_keypair(
-                self.app.session["id"], name, key_size, self.app.db_path,
+                self.app.session["id"], name, spec, self.app.db_path,
             )
         except CustomerKeyError as e:
             self.config(cursor="")
@@ -207,11 +207,13 @@ class GenerateKeypairDialog(tk.Toplevel):
         write_audit(
             self.app.db_path, self.app.session["id"], Action.KEY_GENERATED,
             target_type="customer_key", target_id=str(kp["id"]),
-            details={"name": name, "key_size": key_size},
+            details={"name": name, "algorithm": kp["algorithm"],
+                     "key_size": kp["key_size"]},
         )
+        _label = kp["algorithm"] + (f"-{kp['key_size']}" if kp["key_size"] else "")
         messagebox.showinfo(
             "Thành công",
-            f"Đã sinh keypair '{name}' (id={kp['id']}, RSA-{key_size}).",
+            f"Đã sinh keypair '{name}' (id={kp['id']}, {_label}).",
         )
         if self.on_done:
             self.on_done()
@@ -226,10 +228,12 @@ class ViewPublicKeyDialog(tk.Toplevel):
         self.geometry("680x420")
         self.transient(parent)
 
+        _algo = meta.get("algorithm", "RSA")
+        _sz = f"-{meta['key_size']}" if meta.get("key_size") else ""
         ttk.Label(
             self,
             text=(
-                f"Keypair: {meta['name']}  •  RSA-{meta['key_size']}  •  "
+                f"Keypair: {meta['name']}  •  {_algo}{_sz}  •  "
                 f"id={meta['id']}"
             ),
             font=font("heading_sm"),

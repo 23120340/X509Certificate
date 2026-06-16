@@ -12,6 +12,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 from ui.theme import font
+from ui.common import fmt_local
 from ui.widgets.modal import init_modal, make_button_row
 from services.audit import write_audit, Action
 from services.cert_lifecycle import list_certs_for_owner
@@ -258,8 +259,8 @@ class RevokeRequestFrame(ttk.Frame):
                     r.get("common_name") or "—",
                     reason_preview,
                     r["status"],
-                    r["submitted_at"][:19].replace("T", " "),
-                    (r["reviewed_at"] or "—")[:19].replace("T", " ") if r["reviewed_at"] else "—",
+                    fmt_local(r["submitted_at"]),
+                    fmt_local(r["reviewed_at"]) if r["reviewed_at"] else "—",
                 ),
                 tags=(r["status"],),
             )
@@ -320,8 +321,8 @@ class RevocationRequestDetailDialog(tk.Toplevel):
             f"Domain:        {rec.get('common_name') or '—'}\n"
             f"Serial:        {rec.get('serial_hex') or '—'}\n"
             f"Status:        {rec['status']}\n"
-            f"Gửi lúc:       {rec['submitted_at']}\n"
-            f"Duyệt lúc:     {rec.get('reviewed_at') or '—'}\n"
+            f"Gửi lúc:       {fmt_local(rec['submitted_at'])}\n"
+            f"Duyệt lúc:     {fmt_local(rec.get('reviewed_at'))}\n"
             f"Reviewed by:   {rec.get('reviewed_by') or '—'}\n"
         )
         ttk.Label(frame, text=info, justify=tk.LEFT, font=font("mono")).pack(

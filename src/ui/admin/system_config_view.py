@@ -3,12 +3,15 @@ ui/admin/system_config_view.py
 ------------------------------
 Form chỉnh sửa cấu hình hệ thống — đáp ứng A.3.
 
-5 trường (whitelist từ services/system_config.DEFAULTS):
-  sig_algorithm           — dropdown
-  hash_algorithm          — dropdown
-  default_key_size        — dropdown (2048/3072/4096)
+Các trường:
   default_validity_days   — entry int
   root_ca_validity_days   — entry int
+  Khóa + hàm băm mặc định cho Root CA — KeyAlgSelector(show_hash=True): loại
+    khóa → size/curve → hàm băm PHÙ HỢP (lọc theo đường cong với ECDSA, khóa ô
+    với Ed25519). DÙNG CHUNG đúng widget + cấu hình với dialog "Sinh Root CA
+    mới" nên hai nơi LUÔN ĐỒNG BỘ (gồm cả ràng buộc hàm băm). Lưu vào:
+    default_key_algorithm + default_key_size(RSA)/default_ec_curve(ECDSA) +
+    hash_algorithm (bỏ qua khi Ed25519 — giữ nguyên digest toàn cục cũ).
 
 Bấm "Lưu" → validate → set_config từng key → audit log.
 """
@@ -17,15 +20,11 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 from ui.theme import font
+from ui.widgets.keyalg_selector import KeyAlgSelector, spec_from
 from services.system_config import (
     get_all_config, set_config, DEFAULTS,
 )
 from services.audit import write_audit, Action
-
-
-SIG_ALGO_OPTIONS  = ("RSA-SHA256", "RSA-SHA384", "RSA-SHA512")
-HASH_ALGO_OPTIONS = ("SHA256", "SHA384", "SHA512")
-KEY_SIZE_OPTIONS  = ("2048", "3072", "4096")
 
 
 class SystemConfigFrame(ttk.Frame):
@@ -60,31 +59,28 @@ class SystemConfigFrame(ttk.Frame):
         form.pack(anchor="w")
         self.widgets: dict[str, tk.Variable] = {}
 
-        def add_row(row: int, key: str, label: str,
-                    widget_kind: str, options=None) -> None:
+        def add_entry(row: int, key: str, label: str) -> None:
             ttk.Label(form, text=label).grid(
-                row=row, column=0, sticky="e", pady=6, padx=(0, 8)
-            )
+                row=row, column=0, sticky="e", pady=6, padx=(0, 8))
             var = tk.StringVar()
-            if widget_kind == "combo":
-                w = ttk.Combobox(
-                    form, textvariable=var, values=options,
-                    state="readonly", width=24,
-                )
-            else:  # entry
-                w = ttk.Entry(form, textvariable=var, width=26)
-            w.grid(row=row, column=1, sticky="w", pady=6)
+            ttk.Entry(form, textvariable=var, width=26).grid(
+                row=row, column=1, sticky="w", pady=6)
             self.widgets[key] = var
-            return w
 
-        add_row(0, "sig_algorithm",         "Thuật toán chữ ký:",     "combo",
-                SIG_ALGO_OPTIONS)
-        add_row(1, "hash_algorithm",        "Hàm băm:",               "combo",
-                HASH_ALGO_OPTIONS)
-        add_row(2, "default_key_size",      "Độ dài khóa (RSA):",     "combo",
-                KEY_SIZE_OPTIONS)
-        add_row(3, "default_validity_days", "Hiệu lực cert (ngày):",  "entry")
-        add_row(4, "root_ca_validity_days", "Hiệu lực Root CA (ngày):", "entry")
+        add_entry(0, "default_validity_days", "Hiệu lực cert (ngày):")
+        add_entry(1, "root_ca_validity_days", "Hiệu lực Root CA (ngày):")
+
+        # Khóa + HÀM BĂM mặc định cho Root CA — DÙNG CHUNG KeyAlgSelector
+        # (show_hash=True) ĐÚNG như dialog "Sinh Root CA mới" → hàm băm bị lọc
+        # theo loại khóa/đường cong y hệt, hai nơi không thể lệch nhau.
+        ttk.Separator(form, orient=tk.HORIZONTAL).grid(
+            row=2, column=0, columnspan=2, sticky="ew", pady=(12, 6))
+        ttk.Label(
+            form, text="Khóa + hàm băm mặc định cho Root CA mới:",
+            font=font("label"),
+        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(0, 4))
+        self.keyalg = KeyAlgSelector(form, show_hash=True)
+        self.keyalg.grid(row=4, column=0, columnspan=2, sticky="w")
 
     def _build_actions(self) -> None:
         bar = ttk.Frame(self)
@@ -102,19 +98,30 @@ class SystemConfigFrame(ttk.Frame):
         cfg = get_all_config(self.app.db_path)
         for key, var in self.widgets.items():
             var.set(cfg.get(key, DEFAULTS.get(key, "")))
+        # set_hash TRƯỚC set_spec để _on_type_change dùng đúng hash mặc định.
+        self.keyalg.set_hash(cfg.get("hash_algorithm", DEFAULTS["hash_algorithm"]))
+        self.keyalg.set_spec(spec_from(
+            cfg.get("default_key_algorithm", DEFAULTS["default_key_algorithm"]),
+            cfg.get("default_key_size", DEFAULTS["default_key_size"]),
+            cfg.get("default_ec_curve", DEFAULTS["default_ec_curve"]),
+        ))
 
     def on_reset(self) -> None:
         for key, var in self.widgets.items():
             var.set(DEFAULTS.get(key, ""))
+        self.keyalg.set_hash(DEFAULTS["hash_algorithm"])
+        self.keyalg.set_spec(spec_from(
+            DEFAULTS["default_key_algorithm"], DEFAULTS["default_key_size"],
+            DEFAULTS["default_ec_curve"],
+        ))
         self.status.config(
             text="Đã đặt lại các giá trị mặc định (chưa lưu).",
             foreground="#888",
         )
 
     def on_save(self) -> None:
-        # Validate int fields
-        for int_key in ("default_validity_days", "root_ca_validity_days",
-                        "default_key_size"):
+        # Validate int (day) fields
+        for int_key in ("default_validity_days", "root_ca_validity_days"):
             value = self.widgets[int_key].get().strip()
             try:
                 n = int(value)
@@ -123,22 +130,29 @@ class SystemConfigFrame(ttk.Frame):
                     "Lỗi", f"Trường '{int_key}' phải là số nguyên (đang là {value!r})."
                 )
                 return
-            if int_key == "default_key_size" and n not in (2048, 3072, 4096):
-                messagebox.showerror(
-                    "Lỗi", "default_key_size phải là 2048, 3072 hoặc 4096."
-                )
-                return
-            if int_key.endswith("_days") and n < 1:
-                messagebox.showerror(
-                    "Lỗi", f"'{int_key}' phải >= 1."
-                )
+            if n < 1:
+                messagebox.showerror("Lỗi", f"'{int_key}' phải >= 1.")
                 return
 
-        # Persist + audit
+        # Gom giá trị mới từ widgets + selector khóa (KeyAlgSelector).
+        new_values = {key: var.get().strip() for key, var in self.widgets.items()}
+        ktype = self.keyalg.type_var.get()   # 'RSA' | 'ECDSA' | 'Ed25519'
+        new_values["default_key_algorithm"] = ktype
+        if ktype == "RSA":
+            new_values["default_key_size"] = self.keyalg.param_var.get()
+        elif ktype == "ECDSA":
+            new_values["default_ec_curve"] = self.keyalg.param_var.get()
+        # Hàm băm lấy từ selector (đã lọc theo loại khóa/đường cong). Ed25519 →
+        # get_hash_name()=None → GIỮ NGUYÊN hash_algorithm toàn cục hiện có
+        # (digest này vẫn cần cho việc ký bằng khóa RSA/EC khác).
+        hash_name = self.keyalg.get_hash_name()
+        if hash_name:
+            new_values["hash_algorithm"] = hash_name.replace("-", "")
+
+        # Persist + audit (chỉ ghi các key thực sự đổi)
         current = get_all_config(self.app.db_path)
         changed: list[tuple[str, str, str]] = []
-        for key, var in self.widgets.items():
-            new_val = var.get().strip()
+        for key, new_val in new_values.items():
             if current.get(key) != new_val:
                 changed.append((key, current.get(key, ""), new_val))
                 set_config(key, new_val, self.app.session["id"],

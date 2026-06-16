@@ -1,0 +1,1194 @@
+% !TEX program = xelatex
+%==============================================================================
+%  Phân công code vấn đáp đồ án X509Certificate
+%  Phần việc chi tiết: NGUYỄN GIA HUY
+%  — Nền tảng hệ thống, Bảo mật dữ liệu & Khung giao diện —
+%
+%  Biên dịch:  xelatex PhanCong_NguyenGiaHuy.tex  (chạy 2 lần để có mục lục)
+%==============================================================================
+\documentclass[12pt,a4paper]{article}
+
+% ---- Font (XeLaTeX, hỗ trợ Unicode tiếng Việt đầy đủ) -----------------------
+\usepackage{fontspec}
+\setmainfont{Latin Modern Roman}
+\setsansfont{Latin Modern Sans}
+\setmonofont{Latin Modern Mono}
+
+% ---- Bố cục trang -----------------------------------------------------------
+\usepackage[a4paper,margin=2.4cm]{geometry}
+\usepackage{setspace}\setstretch{1.18}
+\usepackage{parskip}
+\usepackage{amssymb} % \square cho checklist
+
+% ---- Màu sắc ----------------------------------------------------------------
+\usepackage{xcolor}
+\definecolor{accent}{HTML}{1F4E79}
+\definecolor{accentlt}{HTML}{2E75B6}
+\definecolor{rulegray}{HTML}{C3CEDA}
+\definecolor{codebg}{HTML}{F6F8FA}
+\definecolor{codeframe}{HTML}{D9E1EA}
+\definecolor{cmt}{HTML}{6A737D}
+\definecolor{kw}{HTML}{0B5394}
+\definecolor{str}{HTML}{A31515}
+\definecolor{num}{HTML}{098658}
+\definecolor{noteblue}{HTML}{EAF2FB}
+\definecolor{qabg}{HTML}{F3EEFA}
+\definecolor{qarule}{HTML}{7E57C2}
+\definecolor{warnbg}{HTML}{FBF1E6}
+\definecolor{warnrule}{HTML}{D9822B}
+\definecolor{okbg}{HTML}{E8F5E9}
+\definecolor{okrule}{HTML}{2E7D32}
+
+% ---- Tiêu đề mục ------------------------------------------------------------
+\usepackage{titlesec}
+\titleformat{\section}{\Large\bfseries\color{accent}}{\thesection}{0.6em}{}
+\titleformat{\subsection}{\large\bfseries\color{accentlt}}{\thesubsection}{0.6em}{}
+\titleformat{\subsubsection}{\normalsize\bfseries\color{accentlt}}{\thesubsubsection}{0.5em}{}
+\titlespacing*{\section}{0pt}{1.4em}{0.6em}
+
+% ---- Danh sách --------------------------------------------------------------
+\usepackage{enumitem}
+\setlist[itemize]{leftmargin=1.4em,topsep=2pt,itemsep=2pt}
+\setlist[enumerate]{leftmargin=1.6em,topsep=2pt,itemsep=2pt}
+
+% ---- Bảng -------------------------------------------------------------------
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{colortbl}
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+
+% ---- Hộp callout (tcolorbox) ------------------------------------------------
+\usepackage[most]{tcolorbox}
+\newtcolorbox{notebox}{colback=noteblue,colframe=accentlt,boxrule=0pt,
+  leftrule=3pt,arc=2pt,left=8pt,right=8pt,top=5pt,bottom=5pt}
+\newtcolorbox{qabox}{colback=qabg,colframe=qarule,boxrule=0pt,
+  leftrule=3pt,arc=2pt,left=8pt,right=8pt,top=5pt,bottom=5pt}
+\newtcolorbox{warnbox}{colback=warnbg,colframe=warnrule,boxrule=0pt,
+  leftrule=3pt,arc=2pt,left=8pt,right=8pt,top=5pt,bottom=5pt}
+
+% ---- Mã nguồn (fvextra Verbatim — render đúng tiếng Việt dưới XeLaTeX) -------
+% Lưu ý: listings reorder/garble dấu tiếng Việt trong code, nên dùng fvextra.
+\usepackage{fvextra}
+\fvset{
+  numbers=left,
+  numbersep=8pt,
+  frame=single,
+  framesep=6pt,
+  rulecolor=\color{codeframe},
+  fontsize=\footnotesize,
+  breaklines=true,
+  breakanywhere=true,
+  breaksymbolleft={\footnotesize\color{cmt}\ensuremath{\hookrightarrow}},
+}
+% \code: định danh inline; underscore tự cho phép ngắt dòng (tránh tràn bảng).
+\newcommand{\code}[1]{{\ttfamily\small\def\_{\textunderscore\discretionary{}{}{}}#1}}
+
+% ---- Liên kết ---------------------------------------------------------------
+\usepackage{hyperref}
+\hypersetup{
+  colorlinks=true, linkcolor=accent, urlcolor=accentlt, citecolor=accent,
+  pdftitle={Phan cong code van dap - Nguyen Gia Huy - X509Certificate},
+  pdfauthor={Nguyen Gia Huy},
+}
+
+% ---- Header / footer --------------------------------------------------------
+\usepackage{fancyhdr}
+\pagestyle{fancy}\fancyhf{}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\footrulewidth}{0pt}
+\fancyhead[L]{\footnotesize\color{accent}X509Certificate — Phân công vấn đáp}
+\fancyhead[R]{\footnotesize\color{accent}Nguyễn Gia Huy}
+\fancyfoot[C]{\thepage}
+
+% ---- Hộp nhỏ dùng cho sơ đồ (thay cho TikZ, biên dịch ổn định) --------------
+\newcommand{\flowbox}[2]{\colorbox{#1}{\parbox{8.4cm}{\centering #2}}}
+\newcommand{\stepbox}[1]{\fcolorbox{accent}{codebg}{\footnotesize\strut #1}}
+
+\begin{document}
+
+%==============================================================================
+% TRANG BÌA
+%==============================================================================
+\begin{titlepage}
+\centering
+\vspace*{2.2cm}
+{\color{accent}\rule{\linewidth}{1.2pt}}\\[0.6cm]
+{\Huge\bfseries Phân công code vấn đáp đồ án}\\[0.35cm]
+{\Huge\bfseries\color{accent} X509Certificate}\\[0.5cm]
+{\Large Phần việc chi tiết của thành viên}\\[0.3cm]
+{\LARGE\bfseries Nguyễn Gia Huy}\\[0.45cm]
+{\large\itshape Nền tảng hệ thống, Bảo mật dữ liệu\\ và Khung giao diện}\\[0.5cm]
+{\color{accent}\rule{\linewidth}{1.2pt}}\\[1.4cm]
+
+\begin{minipage}{0.85\linewidth}
+\centering\small
+Tài liệu này mô tả chi tiết phần code, lý thuyết bảo mật cần nắm, các test case
+và cách tích hợp cho cụm việc \textbf{nền tảng hệ thống (bootstrap, CSDL), bảo
+mật dữ liệu (hashing \& encryption-at-rest) và khung giao diện (design system,
+router, các dialog dùng chung)}, gắn trực tiếp với mã nguồn thực tế của đồ án:
+\code{main.py}, \code{src/config.py}, \code{src/db/}, \code{src/core/encryption.py},
+\code{src/services/auth.py}, \code{src/services/audit.py}, \code{src/ui/} và
+\code{scripts/backup\_db.py}.
+\end{minipage}
+
+\vfill
+{\large Môn: Mã hoá và Ứng dụng (MHUD)}\\[0.2cm]
+{\large Học phần đồ án X.509 Certificate}\\[0.6cm]
+{\small Ngày biên soạn: 14/06/2026}
+\end{titlepage}
+
+\tableofcontents
+\thispagestyle{fancy}
+\clearpage
+
+%==============================================================================
+\section{Mục tiêu và phạm vi phần việc}
+%==============================================================================
+
+Theo bảng phân công chung, thành viên \textbf{Nguyễn Gia Huy} phụ trách cụm
+\textbf{nền tảng hệ thống, bảo mật dữ liệu và khung giao diện}. Đây là phần
+\emph{đặt nền móng} cho toàn bộ đồ án: nếu các thành viên khác viết nghiệp vụ
+X.509 (sinh khóa, ký CSR, kiểm tra chuỗi chứng chỉ, CRL \& OCSP) thì cụm của Huy
+cung cấp \emph{hạ tầng} để mọi nghiệp vụ đó chạy được:
+
+\begin{itemize}
+  \item \textbf{Khởi động \& cấu hình}: điểm vào \code{main.py}, neo thư mục làm
+        việc, và file hằng số tập trung \code{config.py}.
+  \item \textbf{Tầng dữ liệu (CSDL)}: lớp kết nối SQLite (\code{db/connection.py})
+        với WAL, \code{foreign\_keys}, quản lý transaction; và lược đồ 9 bảng
+        (\code{db/schema.sql}).
+  \item \textbf{Bảo mật dữ liệu lúc nghỉ (at-rest)}: \code{core/encryption.py} —
+        băm mật khẩu bằng scrypt (một chiều) và mã hóa private key bằng
+        AES-256-GCM (hai chiều).
+  \item \textbf{Xác thực \& nhật ký}: \code{services/auth.py} (đăng ký, đăng nhập,
+        đổi mật khẩu, chống dò user) và \code{services/audit.py} (ghi nhật ký
+        best-effort).
+  \item \textbf{Khung giao diện (GUI shell)}: \code{ui/app.py} (router single-root),
+        \code{ui/theme.py} (design system), \code{ui/common.py} (các dialog dùng
+        chung — trong đó có hộp thoại \emph{đọc \& hiển thị chi tiết certificate}),
+        \code{ui/login.py}, các widget tái dụng và vỏ dashboard.
+  \item \textbf{Vận hành (ops)}: tiện ích sao lưu \code{scripts/backup\_db.py}
+        với SQLite backup API và manifest băm SHA-256.
+\end{itemize}
+
+\subsection{Ánh xạ khái niệm $\to$ file code $\to$ vai trò}
+
+Bảng dưới đây là tấm bản đồ tổng để định vị nhanh từng khái niệm trong mã nguồn.
+Hội đồng vấn đáp thường yêu cầu ``chỉ ra trong code chỗ làm việc X'' — bảng này
+giúp trả lời ngay.
+
+\renewcommand{\arraystretch}{1.3}
+\begin{tabularx}{\linewidth}{L{3.4cm} L{4.6cm} X}
+\toprule
+\textbf{Khái niệm} & \textbf{File code} & \textbf{Vai trò} \\
+\midrule
+Điểm vào \& neo cwd & \code{main.py} & \code{os.chdir(PROJECT\_ROOT)} để mọi
+relative path (DB, master.key, certs/) trỏ về gốc dự án; gọi \code{ui.app.main}. \\
+Hằng số tập trung & \code{src/config.py} & Gom path, validity mặc định, giới hạn
+HTTP về 1 nơi — ``1 chỗ đổi, không grep''. \\
+Kết nối SQLite & \code{src/db/connection.py} & \code{get\_conn} (WAL +
+\code{foreign\_keys} ON + Row factory), \code{init\_db}, context manager
+\code{transaction} / \code{conn\_scope}. \\
+Lược đồ CSDL & \code{src/db/schema.sql} & 9 bảng, khóa ngoại, ràng buộc CHECK,
+index cho truy vấn nóng. \\
+Băm mật khẩu (1 chiều) & \code{src/core/encryption.py} & \code{hash\_password} /
+\code{verify\_password} bằng scrypt + salt ngẫu nhiên. \\
+Mã hóa dữ liệu (2 chiều) & \code{src/core/encryption.py} & \code{encrypt\_blob} /
+\code{decrypt\_blob} bằng AES-256-GCM + master.key + nonce + AAD. \\
+Xác thực người dùng & \code{src/services/auth.py} & \code{register\_user},
+\code{login}, \code{change\_password}; chống dò user qua dummy verify. \\
+Nhật ký hệ thống & \code{src/services/audit.py} & \code{write\_audit}
+(best-effort) + catalog \code{Action}; \code{list\_recent}. \\
+Vỏ ứng dụng (router) & \code{src/ui/app.py} & 1 Tk root, \code{show\_*}, bootstrap
+DB/seed/server, định tuyến theo role. \\
+Design system & \code{src/ui/theme.py} & Token màu, spacing, font Montserrat,
+\code{apply\_theme} cấu hình ttk Style. \\
+Dialog dùng chung & \code{src/ui/common.py} & \code{CertDetailDialog} (decode \&
+hiển thị X.509), \code{ChangePasswordDialog}, header dashboard. \\
+Màn hình đăng nhập & \code{src/ui/login.py} & Form login/register + panel LAN. \\
+Widget tái dụng & \code{src/ui/widgets/} & \code{init\_modal} / \code{fit\_to\_content};
+\code{StatusFilterTreeFrame}. \\
+Vỏ dashboard & \code{src/ui/admin/}, \code{src/ui/customer/} & Sidebar menu +
+content router theo nhóm chức năng. \\
+Sao lưu dữ liệu & \code{scripts/backup\_db.py} & SQLite backup API + manifest
+SHA-256 cho yêu cầu nộp D.2. \\
+\bottomrule
+\end{tabularx}
+
+\begin{notebox}
+\textbf{Định vị nhanh:} cụm của Huy phủ ba tầng dưới cùng của kiến trúc:
+\emph{config $\to$ data $\to$ security $\to$ UI shell}. Mọi nghiệp vụ X.509 của
+các bạn khác đều ``ngồi lên'' tầng này: gọi \code{get\_conn}/\code{transaction}
+để đọc ghi DB, gọi \code{encrypt\_blob} để cất private key, gọi \code{write\_audit}
+để ghi log, và render giao diện trong khung \code{App} đã thiết lập sẵn.
+\end{notebox}
+
+%==============================================================================
+\section{Kiến trúc tổng thể và vị trí của thành viên}
+%==============================================================================
+
+Ứng dụng là một desktop app viết bằng Python + Tkinter, dữ liệu lưu trong SQLite,
+khóa bí mật được mã hóa at-rest. Sơ đồ dưới đây mô tả luồng khởi động và các tầng;
+phần \textbf{in đậm} là cụm việc của Huy.
+
+\subsection{Luồng khởi động (bootstrap)}
+
+\begin{center}
+\stepbox{\texttt{python main.py}}\\[4pt]
+$\downarrow$ \footnotesize neo cwd về gốc dự án\\[4pt]
+\stepbox{\textbf{main.py}: \texttt{os.chdir(PROJECT\_ROOT)} + thêm \texttt{src/} vào path}\\[4pt]
+$\downarrow$\\[4pt]
+\stepbox{\textbf{ui.app.App.\_\_init\_\_}: bootstrap}\\[4pt]
+$\downarrow$\\[4pt]
+\stepbox{\textbf{init\_db} (tạo 9 bảng) $\to$ \textbf{seed\_defaults} $\to$ \textbf{seed\_admin\_if\_empty}}\\[4pt]
+$\downarrow$\\[4pt]
+\stepbox{start prod CRL/OCSP server $\to$ \texttt{apply\_theme(root)} $\to$ \textbf{show\_login()}}\\[4pt]
+$\downarrow$ \footnotesize sau khi login, định tuyến theo role\\[4pt]
+\stepbox{role = admin $\to$ \textbf{show\_admin\_dashboard} \quad | \quad role = customer $\to$ \textbf{show\_customer\_dashboard}}
+\end{center}
+
+\subsection{Phân tầng kiến trúc}
+
+\renewcommand{\arraystretch}{1.3}
+\begin{tabularx}{\linewidth}{L{3.2cm} X}
+\toprule
+\textbf{Tầng} & \textbf{Thành phần (cụm của Huy in đậm)} \\
+\midrule
+Trình bày (UI) & \textbf{app.py}, \textbf{theme.py}, \textbf{common.py},
+\textbf{login.py}, \textbf{widgets/}, vỏ dashboard; \emph{(các view nghiệp vụ do
+thành viên khác viết, render bên trong khung này).} \\
+Dịch vụ (service) & \textbf{auth.py}, \textbf{audit.py}, system\_config,
+infra\_manager, ca, csr, cert\_lifecycle\dots \\
+Lõi mật mã (core) & \textbf{encryption.py} (cụm Huy), verify.py, keygen\dots \\
+Dữ liệu (data) & \textbf{connection.py}, \textbf{schema.sql} (SQLite). \\
+Cấu hình \& ops & \textbf{config.py}, \textbf{scripts/backup\_db.py}. \\
+\bottomrule
+\end{tabularx}
+
+\begin{notebox}
+\textbf{Tư duy ``ai gọi ai''}: cụm của Huy hầu như \emph{không gọi} lên các tầng
+trên, mà \emph{được gọi từ} các tầng trên. Đây là kiểu phụ thuộc một chiều
+(dependency hướng xuống) giúp tầng nền ổn định, dễ test độc lập.
+\end{notebox}
+
+%==============================================================================
+\section{Phần code cần làm (chi tiết)}
+%==============================================================================
+
+\subsection{Điểm vào và neo thư mục làm việc — \code{main.py}}
+
+\code{main.py} làm hai việc quan trọng trước khi mở giao diện: (1) \emph{neo} thư
+mục làm việc về gốc dự án để mọi đường dẫn tương đối luôn ổn định, (2) thêm
+\code{src/} vào \code{sys.path} rồi gọi \code{ui.app.main}.
+
+\begin{Verbatim}
+PROJECT_ROOT = Path(__file__).resolve().parent
+
+# Anchor cwd về project root → mọi relative path trong app (master.key,
+# ca_app.db, certs/, received_certs/, backups/...) đều resolve về đây
+# thay vì cwd nơi user chạy command.
+os.chdir(PROJECT_ROOT)
+sys.path.insert(0, str(PROJECT_ROOT / "src"))
+
+from ui.app import main
+
+if __name__ == "__main__":
+    main()
+\end{Verbatim}
+
+\textbf{Giải thích từng ý.}
+\begin{itemize}
+  \item \code{Path(\_\_file\_\_).resolve().parent} cho đường dẫn tuyệt đối của thư
+        mục chứa \code{main.py} — chính là gốc dự án.
+  \item \code{os.chdir(PROJECT\_ROOT)} đổi thư mục làm việc hiện tại (cwd). Vì app
+        dùng các path tương đối như \code{"ca\_app.db"}, \code{"master.key"},
+        \code{"certs/"}, nếu không neo cwd thì khi chạy từ thư mục khác các file
+        này sẽ bị tạo \emph{nhầm chỗ}.
+  \item \code{sys.path.insert(0, .../src)} cho phép import gọn (\code{from ui.app
+        import main}) thay vì phải dùng package path dài.
+\end{itemize}
+
+\subsection{Hằng số tập trung — \code{config.py}}
+
+File này gom các ``magic value'' về một nơi để tránh sửa rải rác. Nguyên tắc:
+path để \emph{tương đối}, các giá trị validity chỉ là \emph{mặc định UI} (runtime
+ưu tiên đọc từ bảng \code{system\_config}).
+
+\begin{Verbatim}
+# Production data
+CERTS_DIR         = "certs"
+TRUST_STORE_CERT  = "certs/trust_store/root_ca.crt"
+# Runtime app data (root project)
+DB_FILE           = "ca_app.db"
+MASTER_KEY_FILE   = "master.key"
+# Cert lifecycle defaults (UI fallback)
+DEFAULT_VALIDITY_DAYS         = 365
+DEFAULT_ROOT_CA_VALIDITY_DAYS = 3650
+DEFAULT_KEY_SIZE              = 2048
+# HTTP fetch limits
+MAX_CRL_BYTES   = 10 * 1024 * 1024
+MAX_OCSP_BYTES  = 64 * 1024
+\end{Verbatim}
+
+\subsection{Lớp kết nối SQLite — \code{db/connection.py}}
+
+Đây là điểm \emph{duy nhất} mở kết nối DB trong toàn app. Mỗi connection được
+cấu hình ba thứ then chốt: bật khóa ngoại, đặt Row factory, và bật WAL.
+
+\begin{Verbatim}
+def get_conn(db_path: str = DEFAULT_DB_PATH) -> sqlite3.Connection:
+    """Mở SQLite connection ở chế độ autocommit + foreign_keys ON."""
+    conn = sqlite3.connect(db_path, isolation_level=None)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    # WAL mode — tốt cho desktop app với reader đồng thời (UI + nền).
+    conn.execute("PRAGMA journal_mode = WAL")
+    return conn
+\end{Verbatim}
+
+\textbf{Giải thích.}
+\begin{itemize}
+  \item \code{isolation\_level=None}: tắt cơ chế tự mở transaction ngầm của
+        \code{sqlite3} — ta chủ động \code{BEGIN}/\code{COMMIT} (xem context
+        manager bên dưới). Như vậy biên giới transaction là \emph{tường minh}.
+  \item \code{row\_factory = sqlite3.Row}: cho phép truy cập cột bằng tên
+        (\code{row["username"]}) thay vì chỉ số — code dễ đọc, ít lỗi.
+  \item \code{PRAGMA foreign\_keys = ON}: SQLite mặc định \textbf{TẮT} khóa ngoại;
+        phải bật cho \emph{mỗi connection} thì các ràng buộc \code{REFERENCES}
+        trong schema mới có hiệu lực.
+  \item \code{PRAGMA journal\_mode = WAL} (Write-Ahead Logging): cho phép đọc và
+        ghi đồng thời tốt hơn — phù hợp app có nhiều luồng đọc (UI + server nền).
+\end{itemize}
+
+Hai context manager quản lý vòng đời connection một cách an toàn:
+
+\begin{Verbatim}
+@contextmanager
+def transaction(db_path: str = DEFAULT_DB_PATH):
+    conn = get_conn(db_path)
+    try:
+        conn.execute("BEGIN")
+        try:
+            yield conn
+        except Exception:
+            conn.execute("ROLLBACK")   # có lỗi → hủy toàn bộ
+            raise
+        else:
+            conn.execute("COMMIT")     # không lỗi → ghi nhận
+    finally:
+        conn.close()
+
+@contextmanager
+def conn_scope(db_path: str = DEFAULT_DB_PATH):
+    """Read-only — chỉ mở/đóng conn, không bao BEGIN/COMMIT."""
+    conn = get_conn(db_path)
+    try:
+        yield conn
+    finally:
+        conn.close()
+\end{Verbatim}
+
+\begin{itemize}
+  \item \code{transaction}: dùng cho thao tác \emph{ghi}. Mọi câu lệnh trong khối
+        \code{with} hoặc \emph{thành công cùng nhau} (COMMIT) hoặc \emph{thất bại
+        cùng nhau} (ROLLBACK) — đảm bảo tính nguyên tử (atomicity).
+  \item \code{conn\_scope}: dùng cho thao tác \emph{đọc} — gọn hơn, không tốn chi
+        phí BEGIN/COMMIT.
+\end{itemize}
+
+\code{init\_db} đọc \code{schema.sql} và chạy một lần; nhờ \code{CREATE TABLE IF
+NOT EXISTS} nên gọi lại nhiều lần cũng an toàn (idempotent):
+
+\begin{Verbatim}
+def init_db(db_path: str = DEFAULT_DB_PATH) -> None:
+    schema = SCHEMA_PATH.read_text(encoding="utf-8")
+    conn = get_conn(db_path)
+    try:
+        conn.executescript(schema)   # idempotent: IF NOT EXISTS
+    finally:
+        conn.close()
+\end{Verbatim}
+
+\subsection{Lược đồ cơ sở dữ liệu — \code{db/schema.sql}}
+
+Schema gồm \textbf{9 bảng} liên kết bằng khóa ngoại. Quy ước chung: thời gian là
+TEXT (ISO-8601 UTC), \code{password\_hash} là chuỗi tự-mô-tả (không mã hóa), còn
+\code{encrypted\_private\_key} + \code{gcm\_nonce} là dữ liệu AES-256-GCM.
+
+\renewcommand{\arraystretch}{1.25}
+\begin{tabularx}{\linewidth}{L{3.4cm} X}
+\toprule
+\textbf{Bảng} & \textbf{Vai trò} \\
+\midrule
+\code{users} & Tài khoản (admin/customer); CHECK role; \code{password\_hash}. \\
+\code{system\_config} & Cặp key-value cấu hình hệ thống. \\
+\code{root\_ca} & Root CA (CN, serial, cert\_pem, private key mã hóa). \\
+\code{customer\_keys} & Keypair khách hàng; private key mã hóa + nonce. \\
+\code{csr\_requests} & Yêu cầu cấp cert; trạng thái pending/approved/rejected. \\
+\code{issued\_certs} & Cert đã phát hành; có \code{renewed\_from\_id}, \code{revoked\_at}. \\
+\code{revocation\_requests} & Yêu cầu thu hồi cert. \\
+\code{audit\_log} & Nhật ký hoạt động (actor, action, target, details, time). \\
+\code{external\_certs} & Cert ngoài do customer upload để theo dõi/verify. \\
+\bottomrule
+\end{tabularx}
+
+Ví dụ một bảng có nhiều ràng buộc tiêu biểu — bảng \code{users}:
+
+\begin{Verbatim}
+CREATE TABLE IF NOT EXISTS users (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    username        TEXT    NOT NULL UNIQUE,
+    password_hash   TEXT    NOT NULL,
+    role            TEXT    NOT NULL CHECK(role IN ('admin', 'customer')),
+    created_at      TEXT    NOT NULL,
+    last_login_at   TEXT
+);
+\end{Verbatim}
+
+Và một bảng dùng khóa ngoại + chính sách xóa (cascade / set null / restrict) —
+trích bảng \code{csr\_requests}:
+
+\begin{Verbatim}
+CREATE TABLE IF NOT EXISTS csr_requests (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    requester_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    customer_key_id INTEGER NOT NULL REFERENCES customer_keys(id)
+                                     ON DELETE RESTRICT,
+    common_name     TEXT    NOT NULL,
+    status          TEXT    NOT NULL DEFAULT 'pending'
+                            CHECK(status IN ('pending','approved','rejected')),
+    submitted_at    TEXT    NOT NULL,
+    reviewed_by     INTEGER REFERENCES users(id) ON DELETE SET NULL
+);
+\end{Verbatim}
+
+\textbf{Ý nghĩa các chính sách khóa ngoại.}
+\begin{itemize}
+  \item \code{ON DELETE CASCADE}: xóa user thì các CSR của user đó cũng bị xóa
+        theo — tránh dữ liệu mồ côi.
+  \item \code{ON DELETE RESTRICT}: \emph{cấm} xóa keypair khi vẫn còn CSR tham
+        chiếu tới nó — bảo vệ toàn vẹn.
+  \item \code{ON DELETE SET NULL}: người duyệt bị xóa thì cột \code{reviewed\_by}
+        về NULL nhưng \emph{giữ lại} bản ghi CSR.
+\end{itemize}
+
+Cuối schema là các index cho truy vấn nóng, ví dụ:
+
+\begin{Verbatim}
+CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_log(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_issued_certs_revoked
+    ON issued_certs(revoked_at) WHERE revoked_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_csr_status ON csr_requests(status);
+\end{Verbatim}
+
+\begin{notebox}
+Index thứ hai là \emph{partial index} (\code{WHERE revoked\_at IS NOT NULL}) —
+chỉ đánh chỉ mục các cert đã thu hồi, vốn chiếm thiểu số. Nhỏ gọn mà vẫn tăng tốc
+truy vấn ``liệt kê cert bị thu hồi'' (phục vụ sinh CRL).
+\end{notebox}
+
+\subsection{Bảo mật dữ liệu — \code{core/encryption.py}}
+
+Đây là phần lõi bảo mật và là điểm hỏi-đáp \emph{trọng tâm} của cụm. Module có
+\textbf{hai cơ chế độc lập}, dùng cho hai mục đích khác nhau:
+
+\renewcommand{\arraystretch}{1.3}
+\begin{tabularx}{\linewidth}{L{3.2cm} L{4.4cm} X}
+\toprule
+& \textbf{Băm mật khẩu (scrypt)} & \textbf{Mã hóa dữ liệu (AES-256-GCM)} \\
+\midrule
+Mục đích & Lưu mật khẩu để \emph{kiểm chứng} & Cất private key để \emph{dùng lại} \\
+Chiều & Một chiều (không giải ngược) & Hai chiều (mã / giải mã) \\
+Cần khóa? & Không (chỉ cần salt) & Có — \code{master.key} 32 byte \\
+Đầu ra & \code{scrypt\$N\$r\$p\$salt\$hash} & \code{(nonce, ciphertext+tag)} \\
+\bottomrule
+\end{tabularx}
+
+\subsubsection{Băm mật khẩu bằng scrypt (một chiều)}
+
+\begin{Verbatim}
+def hash_password(password: str) -> str:
+    salt = secrets.token_bytes(_SCRYPT_SALT_LEN)         # 16 byte ngẫu nhiên
+    derived = hashlib.scrypt(
+        password.encode("utf-8"),
+        salt=salt, n=_SCRYPT_N, r=_SCRYPT_R, p=_SCRYPT_P,  # N=2^14, r=8, p=1
+        dklen=_SCRYPT_DKLEN,
+    )
+    return f"scrypt${_SCRYPT_N}${_SCRYPT_R}${_SCRYPT_P}${salt.hex()}${derived.hex()}"
+\end{Verbatim}
+
+\begin{Verbatim}
+def verify_password(password: str, hashed: str) -> bool:
+    # ... tách "scrypt$N$r$p$salt$hash" từ chuỗi đã lưu ...
+    derived = hashlib.scrypt(password.encode("utf-8"),
+                             salt=salt, n=n, r=r, p=p, dklen=len(expected))
+    return secrets.compare_digest(derived, expected)  # so sánh hằng-thời-gian
+\end{Verbatim}
+
+\textbf{Giải thích.}
+\begin{itemize}
+  \item \textbf{scrypt} là hàm dẫn xuất khóa \emph{tốn bộ nhớ} (memory-hard):
+        tham số $N=2^{14}, r=8$ làm mỗi lần băm tốn $\approx 64$ MB và $\approx
+        0.1$s. Đủ chậm để chống brute-force offline nhưng vẫn mượt khi đăng nhập.
+  \item \textbf{salt ngẫu nhiên 16 byte} mỗi mật khẩu: hai người dùng cùng mật
+        khẩu sẽ cho hash khác nhau, vô hiệu hóa rainbow table.
+  \item \textbf{Chuỗi tự-mô-tả} nhúng cả tham số $N,r,p$: sau này có thể \emph{tăng}
+        tham số cho mật khẩu mới mà vẫn xác thực được hash cũ.
+  \item \code{secrets.compare\_digest} so sánh \emph{hằng thời gian} để tránh rò
+        rỉ thông tin qua timing.
+\end{itemize}
+
+\begin{warnbox}
+\textbf{Vì sao không thể ``giải ngược'' mật khẩu?} scrypt là hàm \emph{một chiều}:
+từ mật khẩu suy ra hash thì dễ, nhưng từ hash suy ngược ra mật khẩu là bài toán
+không khả thi (phải dò vét). Vì vậy DB chỉ lưu hash — kể cả khi DB bị lộ, kẻ tấn
+công cũng không có mật khẩu gốc.
+\end{warnbox}
+
+\subsubsection{Mã hóa private key bằng AES-256-GCM (hai chiều)}
+
+\begin{Verbatim}
+def encrypt_blob(plaintext, aad=None, master_key_path=DEFAULT_MASTER_KEY_PATH):
+    nonce = secrets.token_bytes(GCM_NONCE_SIZE)          # 12 byte/lần
+    aesgcm = AESGCM(get_master_key(master_key_path))     # khóa 32 byte
+    ct = aesgcm.encrypt(nonce, plaintext, aad)           # tag gắn cuối ct
+    return nonce, ct
+
+def decrypt_blob(nonce, ciphertext, aad=None, ...):
+    aesgcm = AESGCM(get_master_key(master_key_path))
+    return aesgcm.decrypt(nonce, ciphertext, aad)  # sai key/nonce/aad → InvalidTag
+\end{Verbatim}
+
+\textbf{Giải thích.}
+\begin{itemize}
+  \item \textbf{AES-256} dùng khóa 256-bit lấy từ \code{master.key} (32 byte ngẫu
+        nhiên sinh lần đầu, sau đó đọc lại và cache).
+  \item \textbf{GCM} (Galois/Counter Mode) là chế độ \emph{mã hóa có xác thực}
+        (AEAD): vừa giữ bí mật vừa phát hiện chỉnh sửa. Nếu ciphertext bị sửa một
+        bit, \code{decrypt} sẽ ném \code{InvalidTag}.
+  \item \textbf{nonce 12 byte} mới mỗi lần mã hóa — \emph{tuyệt đối không tái dùng}
+        nonce với cùng khóa (lặp nonce phá vỡ GCM). Vì vậy nonce được lưu kèm
+        ciphertext trong DB.
+  \item \textbf{AAD} (Associated Data) là dữ liệu \emph{không mã hóa nhưng được
+        xác thực}, dùng để ``cột'' ciphertext vào ngữ cảnh, ví dụ
+        \code{f"customer\_keys:\{id\}"}. Nếu kẻ tấn công đổi chỗ ciphertext của
+        bản ghi này sang bản ghi khác, AAD sẽ không khớp $\Rightarrow$ giải mã
+        thất bại.
+\end{itemize}
+
+Master key được nạp lười và cache lại; lần đầu sẽ tự sinh và ghi file:
+
+\begin{Verbatim}
+def get_master_key(path=DEFAULT_MASTER_KEY_PATH) -> bytes:
+    global _master_key_cache
+    if _master_key_cache is None:
+        _master_key_cache = _load_or_create_master_key(path)  # sinh nếu chưa có
+    return _master_key_cache
+\end{Verbatim}
+
+\begin{warnbox}
+\textbf{Cảnh báo bảo mật (cần nói rõ khi vấn đáp):} demo lưu \code{master.key}
+dạng file phẳng cạnh dự án để chạy offline. Trong môi trường thật, khóa này phải
+nằm trong HSM/KMS. Mất \code{master.key} = mất toàn bộ private key; lộ
+\code{master.key} = lộ toàn bộ private key.
+\end{warnbox}
+
+\subsection{Xác thực người dùng — \code{services/auth.py}}
+
+Module trả về \code{dict} (không bao giờ chứa \code{password\_hash}) và ném
+\code{AuthError} khi nghiệp vụ sai. Điểm tinh tế nhất nằm ở \code{login}:
+
+\begin{Verbatim}
+def login(username, password, db_path) -> dict:
+    row = conn.execute(
+        "SELECT id, username, password_hash, role FROM users WHERE username=?",
+        (username,)).fetchone()
+    # Vẫn gọi verify_password kể cả khi row=None để tránh user-enum qua timing.
+    pw_hash = row["password_hash"] if row else (
+        "scrypt$16384$8$1$" + "0" * 32 + "$" + "0" * 64)   # hash giả
+    ok = verify_password(password, pw_hash)
+    if not row or not ok:
+        raise AuthError("Sai username hoặc password.")      # message generic
+    # ... cập nhật last_login_at trong transaction nhỏ ...
+\end{Verbatim}
+
+\textbf{Giải thích các quyết định thiết kế.}
+\begin{itemize}
+  \item \textbf{Chống dò tài khoản (user-enumeration)}: nếu username không tồn
+        tại, code \emph{vẫn} chạy \code{verify\_password} trên một hash giả. Nhờ
+        đó thời gian phản hồi cho ``sai user'' và ``sai password'' gần như bằng
+        nhau, kẻ tấn công không thể đoán username nào có thật qua đo thời gian.
+  \item \textbf{Thông báo lỗi chung} (``Sai username hoặc password'') cũng nhằm
+        không tiết lộ username có tồn tại hay không.
+  \item Đăng ký (\code{register\_user}) kiểm tra username trùng \emph{bên trong}
+        transaction để tránh race condition, băm mật khẩu trước khi lưu.
+\end{itemize}
+
+Hàm \code{change\_password} kiểm tra mật khẩu cũ, ép mật khẩu mới phải khác cũ,
+rồi băm lại — tất cả trong một transaction:
+
+\begin{Verbatim}
+def change_password(user_id, old_password, new_password, db_path) -> None:
+    _validate_password(new_password)
+    if old_password == new_password:
+        raise AuthError("Mật khẩu mới phải khác mật khẩu cũ.")
+    with transaction(db_path) as conn:
+        row = conn.execute("SELECT password_hash FROM users WHERE id=?",
+                           (user_id,)).fetchone()
+        if not verify_password(old_password, row["password_hash"]):
+            raise AuthError("Mật khẩu cũ không đúng.")
+        conn.execute("UPDATE users SET password_hash=? WHERE id=?",
+                     (hash_password(new_password), user_id))
+\end{Verbatim}
+
+\subsection{Nhật ký hệ thống — \code{services/audit.py}}
+
+Audit log ghi lại mọi hành động chính (login, đổi mật khẩu, duyệt CSR, thu hồi
+cert\dots). Triết lý: \textbf{ghi log không bao giờ được phá vỡ nghiệp vụ}.
+
+\begin{Verbatim}
+def write_audit(db_path, actor_id, action, *, target_type=None,
+                target_id=None, details=None) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    details_json = (json.dumps(details, ensure_ascii=False, default=str)
+                    if details else None)
+    try:
+        conn = get_conn(db_path)
+        try:
+            conn.execute("BEGIN")
+            conn.execute("INSERT INTO audit_log (actor_id, action, "
+                "target_type, target_id, details_json, timestamp) "
+                "VALUES (?,?,?,?,?,?)",
+                (actor_id, action, target_type, target_id, details_json, now))
+            conn.execute("COMMIT")
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[audit] FAILED to write event '{action}': {e}", file=sys.stderr)
+\end{Verbatim}
+
+\textbf{Giải thích.}
+\begin{itemize}
+  \item \textbf{Best-effort}: toàn bộ thân hàm bọc trong \code{try/except}; nếu
+        ghi log lỗi thì chỉ in ra stderr, \emph{không} ném exception ra ngoài —
+        nhờ vậy caller không cần \code{try/except} và nghiệp vụ chính không bị
+        gián đoạn.
+  \item \textbf{Catalog \code{Action}}: tập hằng các tên action
+        (\code{LOGIN}, \code{CSR\_APPROVED}, \code{CERT\_REVOKED}\dots) định nghĩa
+        tập trung để tránh gõ sai chuỗi rải rác.
+  \item \code{details} là dict tùy ý được \code{json.dumps} với
+        \code{ensure\_ascii=False} (giữ tiếng Việt) — lưu vào cột
+        \code{details\_json}.
+\end{itemize}
+
+\textbf{Giao diện xem log --- \code{ui/admin/audit\_view.py}.} Bề mặt UI của audit
+là \code{AuditLogFrame}: bảng Treeview hiển thị 200 sự kiện mới nhất
+(\code{list\_recent}), có ô lọc theo \code{action} và nút Lọc/Refresh. Đây là
+phần ``đọc'' tương ứng với phần ``ghi'' \code{write\_audit} ở trên — cùng do Huy
+phụ trách, khép kín vòng nhật ký (ghi $\to$ xem).
+
+\subsection{Khung ứng dụng \& router — \code{ui/app.py}}
+
+\code{App} là ``bộ não'' của giao diện: chỉ \textbf{một} Tk root, mỗi ``trang'' là
+một method \code{show\_*} dọn root rồi render frame mới (giống mô hình SPA).
+
+\begin{Verbatim}
+class App:
+    def __init__(self, db_path=DEFAULT_DB_PATH):
+        self.db_path = db_path
+        self.session = None
+        self._bootstrap()                  # init_db + seed_defaults + seed_admin
+        self.infra = get_infra()
+        self.infra.start_prod_servers()    # CRL + OCSP nền
+        self.root = tk.Tk()
+        apply_theme(self.root)             # design system (gọi sau khi có root)
+        self.show_login()
+
+    def on_login_success(self, user: dict) -> None:
+        self.session = user
+        write_audit(self.db_path, user["id"], Action.LOGIN, ...)
+        if user["role"] == "admin":
+            self.show_admin_dashboard()    # định tuyến theo role
+        else:
+            self.show_customer_dashboard()
+\end{Verbatim}
+
+\textbf{Giải thích.}
+\begin{itemize}
+  \item \code{\_bootstrap} tạo schema, seed cấu hình mặc định, và seed admin
+        mặc định lần đầu (\code{admin / Admin@123}) — in cảnh báo đổi ngay.
+  \item \code{apply\_theme(self.root)} phải gọi \emph{sau} khi tạo Tk root vì nó
+        cấu hình \code{ttk.Style}.
+  \item \textbf{Định tuyến theo role}: sau khi login thành công, dựa vào
+        \code{user["role"]} để mở dashboard admin hay customer. \code{session}
+        lưu \code{\{id, username, role\}} cho các trang dùng chung.
+  \item \code{logout} ghi audit rồi quay về \code{show\_login}.
+\end{itemize}
+
+\subsection{Hệ thống thiết kế (design system) — \code{ui/theme.py}}
+
+\code{theme.py} định nghĩa \emph{token} (màu, spacing, font) và hàm
+\code{apply\_theme} cấu hình \code{ttk.Style} cho toàn app — đảm bảo giao diện
+nhất quán, đổi một chỗ áp dụng mọi nơi. Font chủ đạo là \textbf{Montserrat}.
+
+\begin{Verbatim}
+COLOR = {
+    "primary": "#1E3A8A",  "accent": "#10B981",
+    "bg": "#F8FAFC",  "surface": "#FFFFFF",  "border": "#E2E8F0",
+    "text": "#0F172A",  "text_muted": "#475569",
+    "success": "#059669", "warning": "#D97706", "danger": "#DC2626",
+}
+SPACE = {"xs": 4, "sm": 8, "md": 12, "lg": 16, "xl": 24, "xxl": 32}
+HEADING_FONT_CHAIN = ["Montserrat"]
+BODY_FONT_CHAIN    = ["Montserrat"]
+\end{Verbatim}
+
+\begin{Verbatim}
+def apply_theme(root: tk.Tk) -> None:
+    root.configure(bg=COLOR["bg"])
+    style = ttk.Style(root)
+    style.theme_use("clam")            # base hỗ trợ custom màu tốt nhất
+    style.configure("Primary.TButton", background=COLOR["primary"],
+                    foreground=COLOR["text_inverse"], ...)
+    style.map("Primary.TButton",
+              background=[("active", COLOR["primary_hover"]),
+                          ("pressed", COLOR["primary_active"])])
+    # ... cấu hình TFrame, TLabel, TEntry, Treeview, Notebook ...
+\end{Verbatim}
+
+\textbf{Giải thích.}
+\begin{itemize}
+  \item \code{font(role)} phân giải tên font theo ``chain'' (ưu tiên Montserrat,
+        fallback an toàn), \emph{cache} kết quả để không truy vấn lại danh sách
+        font hệ thống.
+  \item \code{style.map} định nghĩa trạng thái tương tác (hover/pressed/disabled)
+        — ví dụ nút Primary đậm hơn khi nhấn.
+  \item Vì Tkinter không có hiệu ứng kính (glassmorphism) thật, design system mô
+        phỏng chiều sâu bằng \emph{lớp bề mặt} (bg $\to$ surface $\to$ surface\_alt)
+        và viền tinh tế.
+\end{itemize}
+
+\subsection{Đọc \& hiển thị chi tiết certificate — \code{CertDetailDialog}}
+
+Đây là phần \emph{``đọc/hiển thị cert''} thuộc cụm của Huy, dùng chung cho cả
+admin và customer. Dialog có hai tab: \textbf{Decoded} (giải mã các trường) và
+\textbf{PEM} (văn bản gốc + nút Copy/Save). Phần lõi là decode bằng thư viện
+\code{cryptography}:
+
+\begin{Verbatim}
+from cryptography import x509
+cert = x509.load_pem_x509_certificate(bytes(self.rec["cert_pem"]))
+lines = [
+    f"Version          : {cert.version.name}",
+    f"Serial           : {cert.serial_number:#x}",
+    f"Signature Algo   : {cert.signature_algorithm_oid._name}",
+    f"Issuer           : {cert.issuer.rfc4514_string()}",
+    f"Subject          : {cert.subject.rfc4514_string()}",
+]
+lines.append(f"Not Before       : {cert.not_valid_before_utc}")
+lines.append(f"Not After        : {cert.not_valid_after_utc}")
+pk = cert.public_key()
+if hasattr(pk, "key_size"):
+    lines.append(f"Public Key       : {pk.__class__.__name__} {pk.key_size} bits")
+lines.append("=== Extensions ===")
+for ext in cert.extensions:
+    lines.append(f"  • {ext.oid._name}  (critical={ext.critical})")
+    lines.append(f"      {ext.value}")
+\end{Verbatim}
+
+\textbf{Các trường X.509 được trích và ý nghĩa.}
+\begin{itemize}
+  \item \textbf{Version}: phiên bản X.509 (thường là v3).
+  \item \textbf{Serial}: số sê-ri duy nhất do CA cấp, in dạng hex.
+  \item \textbf{Signature Algorithm}: thuật toán CA dùng để ký cert (vd
+        \code{sha256WithRSAEncryption}).
+  \item \textbf{Issuer / Subject}: tên phân biệt (DN) của \emph{người cấp} và
+        \emph{chủ thể}, định dạng RFC 4514.
+  \item \textbf{Not Before / Not After}: cửa sổ hiệu lực (validity window).
+  \item \textbf{Public Key}: loại khóa và độ dài (vd RSA 2048 bits).
+  \item \textbf{Extensions}: các phần mở rộng (BasicConstraints, KeyUsage,
+        SubjectAltName, CRLDistributionPoints\dots), kèm cờ \code{critical}.
+\end{itemize}
+
+\begin{notebox}
+Toàn bộ thao tác decode bọc trong \code{try/except}; nếu PEM hỏng thì hiển thị
+``Không decode được cert PEM: \dots'' thay vì làm sập giao diện. Ô \code{Text} đặt
+\code{state=DISABLED} để chỉ-đọc.
+\end{notebox}
+
+\subsection{Màn hình đăng nhập \& widget tái dụng}
+
+\code{ui/login.py} dựng form đăng nhập / đăng ký (customer) trong một
+\code{Notebook}, kèm panel ``LAN CSR mode'' (Offline / máy Admin nhận CSR / máy
+Client gửi CSR). Hàm \code{on\_login} gọi \code{auth.login}, nếu lỗi thì ghi audit
+\code{LOGIN\_FAILED} và xóa ô mật khẩu.
+
+Hai widget tái dụng giảm trùng lặp đáng kể:
+\begin{itemize}
+  \item \code{ui/widgets/modal.py}: \code{init\_modal} gom boilerplate tạo dialog
+        (title, geometry, \code{transient}, \code{grab\_set}); \code{fit\_to\_content}
+        ép cửa sổ lớn lên nếu nội dung tràn (tránh che mất nút bấm);
+        \code{make\_button\_row} render hàng nút chuẩn.
+  \item \code{ui/widgets/status\_table.py}: \code{StatusFilterTreeFrame} là bảng
+        Treeview có toolbar lọc theo status + tô màu theo status + đếm số dòng,
+        dùng lại cho hàng loạt view nghiệp vụ.
+\end{itemize}
+
+\begin{Verbatim}
+def init_modal(toplevel, *, parent, title, geometry="440x300",
+               resizable=False, padding=16) -> ttk.Frame:
+    toplevel.title(title)
+    if geometry: toplevel.geometry(geometry)
+    toplevel.resizable(resizable, resizable)
+    toplevel.transient(parent)
+    toplevel.grab_set()                 # modal: khóa tương tác cửa sổ cha
+    body = ttk.Frame(toplevel, padding=padding)
+    body.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+    return body
+\end{Verbatim}
+
+\subsection{Sao lưu dữ liệu — \code{scripts/backup\_db.py}}
+
+Tiện ích sao lưu đáp ứng yêu cầu nộp D.2. Điểm kỹ thuật quan trọng: dùng
+\textbf{SQLite backup API} để chụp ảnh DB \emph{nhất quán} kể cả khi app đang ghi,
+và sinh \textbf{manifest} kèm băm SHA-256 để kiểm tra toàn vẹn.
+
+\begin{Verbatim}
+# Dùng SQLite backup API để snapshot consistent (kể cả khi DB đang được ghi)
+src_conn = sqlite3.connect(str(db_path))
+dst_conn = sqlite3.connect(str(db_out))
+try:
+    src_conn.backup(dst_conn)
+finally:
+    dst_conn.close(); src_conn.close()
+manifest["files"].append({
+    "name": "ca_app.db", "size": db_out.stat().st_size,
+    "sha256": _sha256_file(db_out),
+})
+manifest["table_counts"] = _table_counts(db_out)  # đếm row mỗi bảng để verify
+\end{Verbatim}
+
+\textbf{Giải thích.}
+\begin{itemize}
+  \item \code{src\_conn.backup(dst\_conn)} sao chép trang DB theo cơ chế online
+        backup của SQLite — an toàn hơn copy file thô.
+  \item Manifest ghi \emph{kích thước + SHA-256} từng file và \emph{số dòng} mỗi
+        bảng, để khi khôi phục có thể đối chiếu toàn vẹn.
+  \item \code{master.key} \emph{cực kỳ nhạy cảm}: backup có cờ
+        \code{--no-master-key} để bỏ nó ra khi cần tránh rò rỉ; manifest ghi rõ
+        cảnh báo. Mất cặp \code{master.key} + \code{ca\_app.db} là không decrypt
+        được private key.
+\end{itemize}
+
+%==============================================================================
+\section{Cần nắm để vấn đáp}
+%==============================================================================
+
+\begin{qabox}
+\textbf{Hỏi:} scrypt và AES-GCM khác nhau ở đâu, vì sao chọn từng loại cho từng
+việc?\\[2pt]
+\textbf{Đáp:} scrypt là hàm \emph{băm/dẫn xuất khóa một chiều} dùng cho mật khẩu —
+ta chỉ cần \emph{kiểm chứng} mật khẩu chứ không cần lấy lại, nên một chiều là phù
+hợp và an toàn nhất. AES-256-GCM là \emph{mã hóa đối xứng hai chiều} dùng cho
+private key — vì ta \emph{cần dùng lại} khóa đó để ký, nên phải giải mã được. Hai
+nhu cầu khác nhau $\Rightarrow$ hai công cụ khác nhau.
+\end{qabox}
+
+\begin{qabox}
+\textbf{Hỏi:} Vì sao mật khẩu băm bằng scrypt thì không thể giải ngược?\\[2pt]
+\textbf{Đáp:} scrypt là hàm một chiều: tính hash từ mật khẩu thì dễ, nhưng đảo
+ngược từ hash về mật khẩu là không khả thi về tính toán (phải dò vét toàn bộ không
+gian mật khẩu). Cộng thêm salt ngẫu nhiên cho mỗi mật khẩu và chi phí bộ nhớ cao
+(memory-hard) khiến tấn công bằng rainbow table hay brute-force offline trở nên
+rất tốn kém.
+\end{qabox}
+
+\begin{qabox}
+\textbf{Hỏi:} \code{master.key}, nonce và AAD trong AES-GCM dùng để làm gì?\\[2pt]
+\textbf{Đáp:} \code{master.key} là khóa 256-bit dùng chung để mã/giải mã. nonce
+là số dùng-một-lần 12 byte, mới mỗi lần mã hóa, tuyệt đối không tái dùng với cùng
+khóa (lặp nonce phá vỡ tính an toàn của GCM); nonce được lưu kèm ciphertext. AAD
+là dữ liệu phụ \emph{không mã hóa nhưng được xác thực}, dùng để cột ciphertext vào
+ngữ cảnh (\code{table:row\_id}) — nếu ai đó hoán đổi bản ghi thì AAD không khớp và
+giải mã thất bại (\code{InvalidTag}).
+\end{qabox}
+
+\begin{qabox}
+\textbf{Hỏi:} \code{PRAGMA foreign\_keys} và WAL để làm gì?\\[2pt]
+\textbf{Đáp:} SQLite mặc định \emph{tắt} kiểm tra khóa ngoại, nên phải bật
+\code{foreign\_keys = ON} cho mỗi connection thì các ràng buộc \code{REFERENCES}
+(cascade/restrict/set null) mới có hiệu lực — đảm bảo toàn vẹn dữ liệu. WAL
+(Write-Ahead Logging) là chế độ ghi nhật ký trước, cho phép \emph{đọc và ghi đồng
+thời} mượt hơn — phù hợp app có UI và server nền cùng truy cập DB.
+\end{qabox}
+
+\begin{qabox}
+\textbf{Hỏi:} Tại sao \code{login} vẫn gọi \code{verify\_password} khi username
+không tồn tại?\\[2pt]
+\textbf{Đáp:} Để chống dò tài khoản (user-enumeration) qua kênh thời gian. Nếu
+username sai mà trả lời ngay lập tức, còn username đúng thì mất $\approx 100$ms để
+verify, kẻ tấn công đo thời gian sẽ biết username nào có thật. Bằng cách verify
+trên một hash giả khi không tìm thấy user, thời gian phản hồi hai trường hợp gần
+như bằng nhau. Thông báo lỗi cũng để chung ``Sai username hoặc password''.
+\end{qabox}
+
+\begin{qabox}
+\textbf{Hỏi:} App định tuyến theo role như thế nào?\\[2pt]
+\textbf{Đáp:} Sau khi \code{auth.login} trả về dict có \code{role}, hàm
+\code{App.on\_login\_success} lưu \code{session} rồi kiểm tra: role
+\code{"admin"} $\to$ \code{show\_admin\_dashboard}, role \code{"customer"} $\to$
+\code{show\_customer\_dashboard}. Đây là single Tk root + swap content, mỗi
+dashboard có sidebar menu riêng phù hợp quyền hạn.
+\end{qabox}
+
+\begin{qabox}
+\textbf{Hỏi:} Làm sao decode và đọc các trường của một certificate?\\[2pt]
+\textbf{Đáp:} Dùng \code{x509.load\_pem\_x509\_certificate} của thư viện
+\code{cryptography} để parse PEM thành đối tượng cert, rồi truy cập các thuộc tính:
+\code{version}, \code{serial\_number}, \code{signature\_algorithm\_oid},
+\code{issuer}/\code{subject} (\code{rfc4514\_string()}),
+\code{not\_valid\_before\_utc}/\code{not\_valid\_after\_utc}, \code{public\_key()}
+(loại + \code{key\_size}), và lặp \code{cert.extensions} để liệt kê các phần mở
+rộng kèm cờ \code{critical}. Toàn bộ bọc \code{try/except} để PEM hỏng không làm
+sập UI.
+\end{qabox}
+
+\begin{qabox}
+\textbf{Hỏi:} Audit log được thiết kế thế nào để không phá nghiệp vụ?\\[2pt]
+\textbf{Đáp:} \code{write\_audit} là best-effort: toàn bộ thao tác ghi DB bọc
+trong \code{try/except}, nếu lỗi chỉ in ra stderr chứ không ném exception. Nhờ đó
+một sự cố khi ghi log (vd DB khóa) không làm hỏng thao tác chính như đăng nhập hay
+phát hành cert. Tên action lấy từ catalog \code{Action} để nhất quán.
+\end{qabox}
+
+\begin{qabox}
+\textbf{Hỏi:} Vì sao \code{transaction} cần ROLLBACK còn \code{conn\_scope} thì
+không?\\[2pt]
+\textbf{Đáp:} \code{transaction} dùng cho ghi nên phải đảm bảo nguyên tử: nếu giữa
+chừng có lỗi thì ROLLBACK để DB không rơi vào trạng thái nửa vời. \code{conn\_scope}
+chỉ đọc, không thay đổi dữ liệu nên không cần BEGIN/COMMIT/ROLLBACK — chỉ cần mở
+và đóng connection cho gọn.
+\end{qabox}
+
+%==============================================================================
+\section{Test case \& demo}
+%==============================================================================
+
+Cụm này có bộ smoke test sẵn: \code{tests/test\_m1\_foundation.py}. Lệnh chạy:
+
+\begin{Verbatim}
+# từ thư mục gốc dự án
+python tests/test_m1_foundation.py
+\end{Verbatim}
+
+\subsection{Bảng test case chính}
+
+\renewcommand{\arraystretch}{1.3}
+\begin{tabularx}{\linewidth}{L{4.4cm} X}
+\toprule
+\textbf{Test} & \textbf{Kiểm chứng điều gì} \\
+\midrule
+\code{test\_db\_init\_creates\_tables} & \code{init\_db} tạo đủ 9 bảng. \\
+\code{test\_password\_hash\_roundtrip} & Hash bắt đầu \code{scrypt\$}; verify
+đúng/sai; hai lần hash cùng mật khẩu phải khác (salt random). \\
+\code{test\_aes\_gcm\_roundtrip} & Mã/giải mã đúng; nonce 12 byte; AAD sai $\to$
+\code{InvalidTag}; sửa ciphertext $\to$ \code{InvalidTag}. \\
+\code{test\_register\_login\_flow} & Đăng ký, trùng username báo lỗi, login đúng/sai,
+\code{last\_login\_at} được cập nhật. \\
+\code{test\_change\_password} & Sai mật khẩu cũ báo lỗi; mới $=$ cũ báo lỗi; đổi OK
+thì login bằng mật khẩu cũ thất bại, mật khẩu mới thành công. \\
+\code{test\_seed\_admin\_if\_empty} & Lần đầu tạo admin; lần sau idempotent (trả None). \\
+\code{test\_audit\_log} & Ghi 3 event, thứ tự mới nhất trước, JSON details, filter
+theo action. \\
+\code{test\_system\_config} & Seed defaults + get/set + whitelist guard. \\
+\bottomrule
+\end{tabularx}
+
+\subsection{Đoạn unit test gợi ý (tự kiểm chứng nhanh khi demo)}
+
+\begin{Verbatim}
+# Băm + verify mật khẩu
+h = hash_password("SuperSecret#123")
+assert h.startswith("scrypt$")
+assert verify_password("SuperSecret#123", h)
+assert not verify_password("wrong", h)
+assert hash_password("x") != hash_password("x")   # salt ngẫu nhiên
+
+# AES-GCM: roundtrip + phát hiện chỉnh sửa
+nonce, ct = encrypt_blob(b"PRIVATE-KEY", aad=b"customer_keys:42")
+assert decrypt_blob(nonce, ct, aad=b"customer_keys:42") == b"PRIVATE-KEY"
+from cryptography.exceptions import InvalidTag
+try:
+    decrypt_blob(nonce, ct, aad=b"customer_keys:43")   # AAD sai
+    assert False
+except InvalidTag:
+    pass
+\end{Verbatim}
+
+\subsection{Kịch bản demo trực quan}
+
+\begin{enumerate}
+  \item \textbf{Khởi động}: \code{python main.py}. Lần đầu hệ thống tạo
+        \code{ca\_app.db}, \code{master.key}, seed admin (\code{admin/Admin@123}).
+  \item \textbf{Đăng nhập admin} $\to$ vào Admin Dashboard. \textbf{Đăng xuất},
+        \textbf{đăng ký} một customer mới $\to$ tự động vào Customer Dashboard
+        (minh họa định tuyến theo role).
+  \item \textbf{Đổi mật khẩu}: mở \code{ChangePasswordDialog}, thử sai mật khẩu cũ
+        (báo lỗi), rồi đổi đúng.
+  \item \textbf{Mở chi tiết cert} (tab \textbf{Decoded}): cho thấy Subject/Issuer/
+        Serial/PublicKey/SigAlgo/validity/extensions được decode từ PEM.
+  \item \textbf{Backup DB}: chạy \code{python scripts/backup\_db.py} $\to$ xem
+        thư mục \code{backups/<timestamp>/} và \code{backup\_manifest.json} với
+        SHA-256 + table counts.
+\end{enumerate}
+
+%==============================================================================
+\section{Tích hợp vào chương trình chung}
+%==============================================================================
+
+Cụm nền tảng được các module nghiệp vụ khác ``ghép'' vào theo các điểm nối sau:
+
+\renewcommand{\arraystretch}{1.3}
+\begin{tabularx}{\linewidth}{L{4.6cm} X}
+\toprule
+\textbf{Điểm nối} & \textbf{Được dùng bởi} \\
+\midrule
+\code{get\_conn} / \code{transaction} / \code{conn\_scope} & Tất cả service đọc/ghi
+DB (auth, system\_config, ca, csr, cert\_lifecycle, revocation, audit\dots). \\
+\code{encrypt\_blob} / \code{decrypt\_blob} & Module sinh keypair và Root CA để
+cất/đọc private key đã mã hóa. \\
+\code{hash\_password} / \code{verify\_password} & \code{auth.py} cho login, đăng
+ký, đổi mật khẩu. \\
+\code{write\_audit} + \code{Action} & Mọi flow cần ghi nhật ký (login, duyệt CSR,
+phát hành/thu hồi cert, publish CRL). \\
+\code{App} (router) + \code{apply\_theme} & Mọi dashboard/view nghiệp vụ render
+bên trong khung này và dùng style chung. \\
+\code{CertDetailDialog} & Admin (xem cert đã phát hành) và customer (xem cert của
+mình) đều mở dialog này. \\
+\code{StatusFilterTreeFrame} + \code{init\_modal} & Các view CSR queue, cert
+management, my certs\dots tái dùng để dựng bảng + dialog. \\
+\code{schema.sql} (9 bảng) & Toàn bộ dữ liệu của hệ thống nằm trên lược đồ này. \\
+\bottomrule
+\end{tabularx}
+
+\begin{notebox}
+\textbf{Thứ tự khởi tạo bắt buộc} (Huy cần nắm để giải thích lỗi nếu có): trong
+\code{App.\_\_init\_\_}, phải \code{\_bootstrap()} (init DB + seed) \emph{trước},
+rồi mới tạo \code{tk.Tk()} và \code{apply\_theme(root)} (vì style cần root), cuối
+cùng \code{show\_login()}. Đảo thứ tự sẽ gây lỗi ``no Tk root'' hoặc đăng nhập vào
+DB chưa có bảng.
+\end{notebox}
+
+%==============================================================================
+\section{Bổ sung sau rà soát: các feature dễ bị hỏi}
+
+\subsection{Wiring chế độ LAN trong \code{app.py} \& \code{login.py}}
+
+Khung GUI là nơi \emph{ghép} chế độ LAN (phần nghiệp vụ thuộc cụm Quân), nên Huy
+cần nắm phần wiring:
+\begin{itemize}
+  \item \code{App.start\_csr\_api} / \code{stop\_csr\_api} / \code{set\_remote\_csr\_api}:
+        bật/tắt server nhận CSR trên máy Admin, hoặc trỏ client tới Admin API. Đọc
+        3 biến môi trường \code{X509\_REMOTE\_CSR\_API\_URL}, \code{X509\_CSR\_API\_TOKEN},
+        \code{remote\_csr\_password}.
+  \item Panel LAN trong \code{LoginFrame} (chiếm phần lớn \code{login.py}): 3 chế độ
+        \emph{Offline} / \emph{Admin} (nhận CSR) / \emph{Client} (gửi CSR). Ràng buộc:
+        \code{on\_start\_admin\_api} validate port 1024--65535 và \emph{bắt buộc token}
+        khi bind ra LAN; \code{on\_test\_client\_api} gọi \code{check\_admin\_api\_health}.
+  \item \code{\_sync\_lan\_crl\_ocsp\_urls}: ghi lại \code{prod\_crl\_url}/\code{prod\_ocsp\_url}
+        theo \emph{IP LAN} (qua \code{set\_config}) để URL nhúng trong cert (CRLDP/AIA)
+        truy cập được từ máy khác --- nếu không, máy client verify sẽ không tải nổi CRL/OCSP.
+\end{itemize}
+
+\subsection{Quy tắc hợp lệ username \& mật khẩu (\code{auth.py})}
+
+\begin{itemize}
+  \item \code{\_validate\_username}: username chỉ gồm chữ-số và \code{. \_ - @}, tối đa
+        \textbf{64} ký tự (chống ký tự lạ/đụng định dạng).
+  \item Mật khẩu tối thiểu \textbf{6} ký tự (\code{MIN\_PASSWORD\_LEN}); \code{role} phải
+        thuộc whitelist \code{('admin','customer')}.
+  \item \code{get\_user\_by\_id} trả profile \emph{không} kèm \code{password\_hash};
+        \code{count\_users(role)} là điều kiện idempotent của \code{seed\_admin\_if\_empty}
+        (chỉ tạo admin khi chưa có admin nào).
+\end{itemize}
+
+\subsection{Server hạ tầng nền \& Backup/Restore đầy đủ}
+
+\begin{itemize}
+  \item \textbf{Prod servers.} \code{\_bootstrap} gọi \code{infra\_manager.start\_prod\_servers()}
+        bật \emph{nền} 2 HTTP server: CRL \code{:8889} + OCSP \code{:8888} (phục vụ verify
+        cert, vd upload-verify B.9); \code{\_on\_close} gọi \code{stop\_all()} khi đóng app;
+        admin dashboard có status bar badge ON/OFF theo port.
+  \item \textbf{Backup (\code{scripts/backup\_db.py}) sao lưu nhiều hơn DB:} ngoài
+        \code{ca\_app.db} (qua SQLite backup API), còn copy \code{master.key} (kèm cảnh
+        báo), \code{shutil.copytree} toàn bộ \code{certs/} (trust\_store $+$ \code{crl.pem}
+        $+$ \code{ocsp\_db.json}, băm SHA-256 từng file), và \code{schema.sql}; tất cả
+        ghi vào \code{manifest}. Cờ CLI: \code{--dest}, \code{--no-master-key},
+        \code{--dump-sql} (và \code{--schema-only} ghi trong docstring nhưng \emph{chưa}
+        khai báo trong argparse --- điểm dễ bị hỏi).
+  \item \textbf{\code{restore\_hint()}} in quy trình khôi phục: đóng app $\to$ backup
+        trạng thái hiện tại $\to$ copy db$+$master.key$+$certs $\to$ khởi động lại
+        $\to$ đối chiếu số row theo manifest. \emph{Cảnh báo}: \code{master.key} và
+        \code{ca\_app.db} phải khớp \emph{cặp} --- lệch cặp $\Rightarrow$ \code{InvalidTag}
+        khi giải mã private key.
+\end{itemize}
+
+\subsection{Chi tiết nhỏ khác}
+
+\begin{itemize}
+  \item \textbf{Font:} chain hiện chỉ có \code{['Montserrat']}; \code{resolve\_family}
+        duyệt chain và fallback phần tử cuối (vẫn ra Montserrat kể cả khi máy chưa cài).
+        Lưu ý docstring \code{theme.py} còn tàn dư ``DFVN Float'' --- thực thi dùng
+        Montserrat; nói rõ để không lúng túng nếu giám khảo đọc code.
+  \item \code{reset\_master\_key\_cache()} xóa cache \code{\_master\_key\_cache} (dùng cho
+        test đổi \code{DEFAULT\_MASTER\_KEY\_PATH}); \code{\_load\_or\_create} kiểm tra key
+        đúng \textbf{32 byte} và \code{chmod 0o600} (POSIX).
+  \item \code{hero\_section} (hero $+$ lưới feature card, dùng ở overview \& Lab) và
+        \code{build\_dashboard\_header} (badge role $+$ nút Đổi mật khẩu mở
+        \code{ChangePasswordDialog} $+$ Đăng xuất gọi \code{app.logout}) là component
+        UI tái dụng.
+\end{itemize}
+
+%==============================================================================
+\section{Checklist chuẩn bị vấn đáp}
+%==============================================================================
+
+\begin{itemize}
+  \item[\textbf{$\square$}] Giải thích được \code{main.py} neo cwd để làm gì và hậu
+        quả nếu không neo.
+  \item[\textbf{$\square$}] Chỉ ra trong \code{connection.py} ba dòng PRAGMA/cấu
+        hình và nói rõ tác dụng từng dòng (foreign\_keys, row\_factory, WAL).
+  \item[\textbf{$\square$}] Phân biệt \code{transaction} (ghi, có
+        BEGIN/COMMIT/ROLLBACK) và \code{conn\_scope} (đọc).
+  \item[\textbf{$\square$}] Vẽ/đọc được lược đồ 9 bảng và giải thích 3 chính sách
+        khóa ngoại (CASCADE / RESTRICT / SET NULL).
+  \item[\textbf{$\square$}] So sánh scrypt vs AES-GCM: một chiều vs hai chiều, vì
+        sao chọn từng loại.
+  \item[\textbf{$\square$}] Giải thích vì sao hash mật khẩu không giải ngược được
+        và vai trò của salt.
+  \item[\textbf{$\square$}] Nói rõ vai trò master.key, nonce (không tái dùng) và
+        AAD trong AES-GCM; điều gì xảy ra khi ciphertext bị sửa.
+  \item[\textbf{$\square$}] Trình bày cơ chế chống dò tài khoản trong \code{login}
+        (dummy verify + message chung).
+  \item[\textbf{$\square$}] Giải thích định tuyến theo role trong
+        \code{on\_login\_success}.
+  \item[\textbf{$\square$}] Demo \code{CertDetailDialog} và đọc được ý nghĩa từng
+        trường X.509 (Subject/Issuer/Serial/PublicKey/SigAlgo/validity/extensions).
+  \item[\textbf{$\square$}] Giải thích audit log best-effort và catalog
+        \code{Action}.
+  \item[\textbf{$\square$}] Mô tả backup: SQLite backup API + manifest SHA-256 +
+        cảnh báo master.key.
+  \item[\textbf{$\square$}] Chạy được \code{tests/test\_m1\_foundation.py} và đọc
+        kết quả PASS/FAIL.
+  \item[\textbf{$\square$}] Nắm thứ tự bootstrap trong \code{App} và lý do bắt
+        buộc của thứ tự đó.
+\end{itemize}
+
+\vfill
+\begin{center}
+\footnotesize\color{cmt}
+--- Hết tài liệu phân công: Nguyễn Gia Huy ---
+\end{center}
+
+\end{document}

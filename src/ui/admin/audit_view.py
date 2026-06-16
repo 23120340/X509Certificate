@@ -10,6 +10,7 @@ import tkinter as tk
 from tkinter import ttk
 
 from services.audit import list_recent
+from ui.common import fmt_local
 
 
 class AuditLogFrame(ttk.Frame):
@@ -54,7 +55,7 @@ class AuditLogFrame(ttk.Frame):
                   "action": 150, "target": 150, "details": 240}
         anchors = {"id": "center", "timestamp": "w", "actor_id": "center",
                    "action": "w", "target": "w", "details": "w"}
-        labels = {"id": "ID", "timestamp": "Thời gian (UTC)",
+        labels = {"id": "ID", "timestamp": "Thời gian",
                   "actor_id": "Actor", "action": "Action",
                   "target": "Target", "details": "Details"}
         for c in cols:
@@ -84,7 +85,7 @@ class AuditLogFrame(ttk.Frame):
                 "", tk.END,
                 values=(
                     e["id"],
-                    e["timestamp"][:19].replace("T", " "),  # gọn
+                    fmt_local(e["timestamp"]),
                     e["actor_id"] if e["actor_id"] is not None else "—",
                     e["action"],
                     target,

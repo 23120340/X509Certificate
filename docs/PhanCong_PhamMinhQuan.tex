@@ -1,0 +1,1062 @@
+% !TEX program = xelatex
+%==============================================================================
+%  Phân công code vấn đáp đồ án X509Certificate
+%  Phần việc chi tiết: PHẠM MINH QUÂN
+%  — Xác thực client, Verification Lab & LAN mode —
+%
+%  Biên dịch:  xelatex PhanCong_PhamMinhQuan.tex  (chạy 2 lần để có mục lục)
+%==============================================================================
+\documentclass[12pt,a4paper]{article}
+
+% ---- Font (XeLaTeX, hỗ trợ Unicode tiếng Việt đầy đủ) -----------------------
+\usepackage{fontspec}
+\setmainfont{Latin Modern Roman}
+\setsansfont{Latin Modern Sans}
+\setmonofont{Latin Modern Mono}
+
+% ---- Bố cục trang -----------------------------------------------------------
+\usepackage[a4paper,margin=2.4cm]{geometry}
+\usepackage{setspace}\setstretch{1.18}
+\usepackage{parskip}
+\usepackage{amssymb} % \square cho checklist
+
+% ---- Màu sắc ----------------------------------------------------------------
+\usepackage{xcolor}
+\definecolor{accent}{HTML}{1F4E79}
+\definecolor{accentlt}{HTML}{2E75B6}
+\definecolor{rulegray}{HTML}{C3CEDA}
+\definecolor{codebg}{HTML}{F6F8FA}
+\definecolor{codeframe}{HTML}{D9E1EA}
+\definecolor{cmt}{HTML}{6A737D}
+\definecolor{kw}{HTML}{0B5394}
+\definecolor{str}{HTML}{A31515}
+\definecolor{num}{HTML}{098658}
+\definecolor{noteblue}{HTML}{EAF2FB}
+\definecolor{qabg}{HTML}{F3EEFA}
+\definecolor{qarule}{HTML}{7E57C2}
+\definecolor{warnbg}{HTML}{FBF1E6}
+\definecolor{warnrule}{HTML}{D9822B}
+\definecolor{okbg}{HTML}{E8F5E9}
+\definecolor{okrule}{HTML}{2E7D32}
+
+% ---- Tiêu đề mục ------------------------------------------------------------
+\usepackage{titlesec}
+\titleformat{\section}{\Large\bfseries\color{accent}}{\thesection}{0.6em}{}
+\titleformat{\subsection}{\large\bfseries\color{accentlt}}{\thesubsection}{0.6em}{}
+\titleformat{\subsubsection}{\normalsize\bfseries\color{accentlt}}{\thesubsubsection}{0.5em}{}
+\titlespacing*{\section}{0pt}{1.4em}{0.6em}
+
+% ---- Danh sách --------------------------------------------------------------
+\usepackage{enumitem}
+\setlist[itemize]{leftmargin=1.4em,topsep=2pt,itemsep=2pt}
+\setlist[enumerate]{leftmargin=1.6em,topsep=2pt,itemsep=2pt}
+
+% ---- Bảng -------------------------------------------------------------------
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{colortbl}
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+
+% ---- Hộp callout (tcolorbox) ------------------------------------------------
+\usepackage[most]{tcolorbox}
+\newtcolorbox{notebox}{colback=noteblue,colframe=accentlt,boxrule=0pt,
+  leftrule=3pt,arc=2pt,left=8pt,right=8pt,top=5pt,bottom=5pt}
+\newtcolorbox{qabox}{colback=qabg,colframe=qarule,boxrule=0pt,
+  leftrule=3pt,arc=2pt,left=8pt,right=8pt,top=5pt,bottom=5pt}
+\newtcolorbox{warnbox}{colback=warnbg,colframe=warnrule,boxrule=0pt,
+  leftrule=3pt,arc=2pt,left=8pt,right=8pt,top=5pt,bottom=5pt}
+
+% ---- Mã nguồn (fvextra Verbatim — render đúng tiếng Việt dưới XeLaTeX) -------
+% Lưu ý: listings reorder/garble dấu tiếng Việt trong code, nên dùng fvextra.
+\usepackage{fvextra}
+\fvset{
+  numbers=left,
+  numbersep=8pt,
+  frame=single,
+  framesep=6pt,
+  rulecolor=\color{codeframe},
+  fontsize=\footnotesize,
+  breaklines=true,
+  breakanywhere=true,
+  breaksymbolleft={\footnotesize\color{cmt}\ensuremath{\hookrightarrow}},
+}
+% \code: định danh inline; underscore tự cho phép ngắt dòng (tránh tràn bảng).
+\newcommand{\code}[1]{{\ttfamily\small\def\_{\textunderscore\discretionary{}{}{}}#1}}
+
+% ---- Liên kết ---------------------------------------------------------------
+\usepackage{hyperref}
+\hypersetup{
+  colorlinks=true, linkcolor=accent, urlcolor=accentlt, citecolor=accent,
+  pdftitle={Phan cong code van dap - Pham Minh Quan - X509Certificate},
+  pdfauthor={Pham Minh Quan},
+}
+
+% ---- Header / footer --------------------------------------------------------
+\usepackage{fancyhdr}
+\pagestyle{fancy}\fancyhf{}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\footrulewidth}{0pt}
+\fancyhead[L]{\footnotesize\color{accent}X509Certificate — Phân công vấn đáp}
+\fancyhead[R]{\footnotesize\color{accent}Phạm Minh Quân}
+\fancyfoot[C]{\thepage}
+
+% ---- Hộp nhỏ dùng cho sơ đồ (thay cho TikZ, biên dịch ổn định) --------------
+\newcommand{\flowbox}[2]{\colorbox{#1}{\parbox{8.4cm}{\centering #2}}}
+\newcommand{\stepbox}[1]{\fcolorbox{accent}{codebg}{\footnotesize\strut #1}}
+
+\begin{document}
+
+%==============================================================================
+% TRANG BÌA
+%==============================================================================
+\begin{titlepage}
+\centering
+\vspace*{2.2cm}
+{\color{accent}\rule{\linewidth}{1.2pt}}\\[0.6cm]
+{\Huge\bfseries Phân công code vấn đáp đồ án}\\[0.35cm]
+{\Huge\bfseries\color{accent} X509Certificate}\\[0.5cm]
+{\Large Phần việc chi tiết của thành viên}\\[0.3cm]
+{\LARGE\bfseries Phạm Minh Quân}\\[0.45cm]
+{\large\itshape Xác thực client, Verification Lab \& LAN mode}\\[0.5cm]
+{\color{accent}\rule{\linewidth}{1.2pt}}\\[1.4cm]
+
+\begin{minipage}{0.85\linewidth}
+\centering\small
+Tài liệu này mô tả chi tiết phần code, lý thuyết X.509 cần nắm, các test case
+và cách tích hợp cho cụm \textbf{xác thực phía client (5 bước verify),
+Verification Lab và chế độ nộp CSR qua mạng LAN}, gắn trực tiếp với mã nguồn
+thực tế của đồ án trong \code{src/core/verify.py}, \code{src/services/},
+\code{src/legacy/}, \code{src/infra/} và \code{scripts/}.
+\end{minipage}
+
+\vfill
+{\large Môn: Mã hoá và Ứng dụng (MHUD)}\\[0.2cm]
+{\large Học phần đồ án X.509 Certificate}\\[0.6cm]
+{\small Ngày biên soạn: 14/06/2026}
+\end{titlepage}
+
+\tableofcontents
+\thispagestyle{fancy}
+\clearpage
+
+%==============================================================================
+\section{Mục tiêu và phạm vi phần việc}
+%==============================================================================
+
+Thành viên \textbf{Phạm Minh Quân} phụ trách cụm \textbf{``Xác thực client,
+Verification Lab \& LAN mode''}. Đây là phần \emph{phía người dùng cuối}: nhận
+một chứng chỉ X.509 (từ socket server, từ file upload, hay từ máy khác trên LAN),
+chạy đủ \textbf{5 bước xác thực}, tổng hợp kết quả PASS/FAIL, và cung cấp một
+``phòng thí nghiệm'' (Verification Lab) để dựng đủ các tình huống cert tốt/xấu
+phục vụ demo. Ngoài ra cụm còn lo chế độ \textbf{LAN}: cho phép một máy khách sinh
+keypair $+$ CSR rồi nộp qua HTTP API tới máy Admin để xin cấp chứng chỉ.
+
+\subsection{Ánh xạ khái niệm $\to$ file code $\to$ vai trò}
+
+\begin{table}[h]
+\centering\small
+\renewcommand{\arraystretch}{1.3}
+\begin{tabularx}{\linewidth}{L{4.0cm} L{4.6cm} X}
+\toprule
+\textbf{Khái niệm} & \textbf{File code} & \textbf{Vai trò} \\
+\midrule
+5 bước xác thực $+$ orchestrator & \code{src/core/verify.py} & \code{verify\_certificate\_full} gọi 5 bước, tính \code{overall=AND}; chứa \code{verify\_signature}, \code{check\_validity}, \code{check\_hostname}, \code{check\_crl}, \code{check\_ocsp}, \code{check\_pinned}. \\
+Lấy cert qua mạng $+$ guard & \code{src/core/verify.py} & \code{fetch\_certificate} (socket GET\_CERT), \code{\_validate\_fetch\_url} (chống SSRF), \code{\_fetch\_capped} (chống DoS). \\
+Upload \& lưu cert ngoài & \code{src/services/external\_certs.py} & \code{save\_external\_cert} (SHA-256 dedup, BOLA), \code{parse\_cert\_summary}. \\
+Verification Lab (back-end) & \code{src/legacy/server\_manager.py} & \code{ServerManager} sinh nhiều socket server theo flavor, tamper, renew. \\
+Verification Lab (GUI) & \code{src/legacy/lifecycle\_demo.py} & GUI Tkinter, \code{\_do\_verify} chạy 5 bước thread nền, banner PASS/FAIL, \code{launch\_as\_toplevel}. \\
+LAN mode --- server nhận CSR & \code{src/services/remote\_csr.py} & \code{submit\_remote\_csr} (login/auto-register, parse$+$verify CSR, chèn DB). \\
+LAN mode --- client gửi & \code{src/services/remote\_csr\_client.py} & \code{\_post\_json}, \code{submit\_csr\_to\_admin\_api}, health check. \\
+LAN mode --- HTTP API & \code{src/infra/csr\_api\_server.py} & Routing \code{/api/csr/submit}, \code{\_authorized} token, \code{\_is\_loopback\_bind}. \\
+UI upload cert ngoài & \code{src/ui/customer/upload\_external\_view.py} & Paste/Browse PEM $\to$ lưu $\to$ \code{VerifyExternalDialog} chạy 5 bước. \\
+CLI tiện ích & \code{scripts/submit\_csr\_lan.py}, \code{scripts/dump\_cert.py} & Sinh keypair$+$CSR rồi POST; xuất cert ra PEM để test. \\
+\bottomrule
+\end{tabularx}
+\caption{Phần việc của Phạm Minh Quân ánh xạ vào mã nguồn thực tế.}
+\end{table}
+
+\begin{notebox}
+\textbf{Tóm tắt một câu khi mở đầu vấn đáp:} \emph{``Em phụ trách toàn bộ phía
+client --- nhận chứng chỉ (qua socket, file upload hoặc LAN) rồi chạy 5 bước xác
+thực (chữ ký/Root CA, thời hạn, hostname, CRL, OCSP) và tổng hợp PASS/FAIL; đồng
+thời xây Verification Lab để dựng các cert tốt/xấu cho demo, và chế độ LAN cho
+máy khác nộp CSR qua HTTP API.''}
+\end{notebox}
+
+\subsection{Ranh giới với các thành viên khác}
+
+Cụm này \emph{tiêu thụ} kết quả của các nhóm khác và \emph{điều phối} pipeline.
+Cụ thể: parse cert (\code{x509.load\_pem\_x509\_certificate}) thuộc nhóm đọc cert;
+primitive verify chữ ký (\code{public\_key.verify}) và verify chữ ký CRL là phần
+mật mã của thành viên khác; còn việc \emph{gọi} chúng đúng thứ tự, gom kết quả,
+xử lý lỗi và đưa ra kết luận cuối cùng là của Quân.
+
+%==============================================================================
+\section{Kiến trúc tổng thể và vị trí của thành viên}
+%==============================================================================
+
+\subsection{Ba nguồn cert mà client phải xác thực}
+
+Điểm thống nhất của cả cụm: dù cert đến từ đâu, tất cả đều đổ về một hàm duy nhất
+là \code{verify\_certificate\_full()}. Ba nguồn:
+
+\begin{center}
+\flowbox{noteblue}{\textbf{Nguồn 1 --- Socket server} (Verification Lab)\\[1pt]
+  {\footnotesize \code{fetch\_certificate(host, port)} gửi \code{GET\_CERT},
+  nhận PEM}}\\[5pt]
+\flowbox{qabg}{\textbf{Nguồn 2 --- File upload} (UI Customer)\\[1pt]
+  {\footnotesize paste/Browse PEM $\to$ \code{save\_external\_cert} $\to$
+  \code{VerifyExternalDialog}}}\\[5pt]
+\flowbox{okbg}{\textbf{Nguồn 3 --- LAN} (máy khác nộp CSR, không phải verify trực tiếp)\\[1pt]
+  {\footnotesize CSR qua HTTP $\to$ Admin cấp cert $\to$ dump ra PEM để verify}}\\[6pt]
+{\large$\big\downarrow$}\quad{\footnotesize tất cả đổ về}\\[4pt]
+\fcolorbox{accent}{codebg}{\strut\code{verify\_certificate\_full()} --- 5 bước + tổng hợp}
+\end{center}
+
+\subsection{Luồng 5 bước xác thực}
+
+\begin{center}
+\stepbox{\textbf{B1} chữ ký + Root CA} $\to$
+\stepbox{\textbf{B2} thời hạn} $\to$
+\stepbox{\textbf{B3} hostname/SAN}\\[6pt]
+$\to$ \stepbox{\textbf{B4} CRL} $\to$
+\stepbox{\textbf{B5} OCSP} $\to$
+\fcolorbox{qarule}{qabg}{\footnotesize\strut\textbf{overall = AND(B1..B5)}}\\[4pt]
+{\footnotesize\itshape Bước phụ ``Pin warning (advisory)'' chạy SAU khi tính
+overall $\to$ không ảnh hưởng kết luận chính.}
+\end{center}
+
+\begin{table}[h]
+\centering\small
+\renewcommand{\arraystretch}{1.3}
+\begin{tabularx}{\linewidth}{L{1.7cm} L{4.4cm} X}
+\toprule
+\textbf{Bước} & \textbf{Hàm} & \textbf{Ý nghĩa} \\
+\midrule
+B1 & \code{verify\_signature} & Cert được Root CA trong Trust Store ký hợp lệ? \\
+B2 & \code{check\_validity} & Hiện tại nằm trong [Not Before, Not After]? \\
+B3 & \code{check\_hostname} $+$ \code{\_dnsname\_matches} & Hostname khớp SAN (DNS/wildcard/IP)? \\
+B4 & \code{check\_crl} $+$ \code{\_verify\_crl\_signature} & Serial có trong danh sách thu hồi CRL? \\
+B5 & \code{check\_ocsp} & Trạng thái trực tuyến GOOD/REVOKED? \\
+phụ & \code{check\_pinned} & Fingerprint khớp pin đã lưu (TOFU/rotation)? \emph{advisory} \\
+\bottomrule
+\end{tabularx}
+\caption{Sáu hàm cấu thành pipeline xác thực client.}
+\end{table}
+
+\subsection{Kiến trúc LAN mode}
+
+\begin{center}
+\flowbox{okbg}{\textbf{Máy B (Client)} --- \code{scripts/submit\_csr\_lan.py}\\[1pt]
+  {\footnotesize sinh keypair $+$ CSR $\to$ \code{POST /api/csr/submit}
+  (private key KHÔNG rời máy)}}\\[5pt]
+{\large$\big\downarrow$}\quad{\footnotesize HTTP/JSON qua LAN}\\[5pt]
+\flowbox{noteblue}{\textbf{Máy A (Admin)} --- \code{csr\_api\_server.py}\\[1pt]
+  {\footnotesize \code{\_authorized} (token) $\to$ \code{submit\_remote\_csr}
+  $\to$ chèn \code{csr\_requests} pending}}\\[5pt]
+{\large$\big\downarrow$}\\[4pt]
+\fcolorbox{accent}{codebg}{\strut CSR Queue UI của Admin: duyệt $\to$ cấp cert}
+\end{center}
+
+%==============================================================================
+\section{Phần code cần làm (chi tiết)}
+%==============================================================================
+
+\subsection{Orchestrator --- \code{verify\_certificate\_full}}
+
+Đây là điểm hội tụ của cả cụm: nó parse cert, nạp Trust Store, gọi 5 bước, gom
+\code{(name, ok, msg)}, và tính \code{overall}. Bước phụ pin được append \emph{sau}
+khi tính overall:
+
+\begin{Verbatim}
+def verify_certificate_full(cert_bytes, hostname, trust_store_dir,
+                            log_callback=None, pin_dir="received_certs",
+                            peer_address=None):
+    """Chạy đủ 5 bước. Trả về (overall_pass, results, cert)."""
+    cert = x509.load_pem_x509_certificate(cert_bytes)
+    trusted_cas = load_trust_store(trust_store_dir)
+    steps = [
+        ("Bước 1 - Verify chữ ký bằng Root CA (Trust Store)",
+            lambda: verify_signature(cert, trusted_cas)),
+        ("Bước 2 - Thời hạn hiệu lực",      lambda: check_validity(cert)),
+        (f"Bước 3 - Hostname ({hostname})", lambda: check_hostname(cert, hostname)),
+        ("Bước 4 - CRL check ...",          lambda: check_crl(cert, trusted_cas)),
+        ("Bước 5 - OCSP check",             lambda: check_ocsp(cert)),
+    ]
+    results = []
+    for name, fn in steps:
+        ok, msg = fn()
+        results.append((name, ok, msg))
+    overall = all(ok for _, ok, _ in results)   # KẾT LUẬN = AND tất cả bước chính
+    # ... save_server_cert + check_pinned được append SAU -> không vào overall
+    return overall, results, cert
+\end{Verbatim}
+
+\textbf{Quyết định thiết kế cần bảo vệ:}
+\begin{itemize}
+  \item \code{overall = all(...)}: chỉ HỢP LỆ khi \emph{mọi} bước chính PASS ---
+        nguyên tắc ``mặc định từ chối''.
+  \item Gom \code{(name, ok, msg)} thay vì fail-fast: chạy hết để báo \emph{đầy
+        đủ} lý do (ví dụ vừa hết hạn vừa bị thu hồi).
+  \item Tách advisory khỏi \code{overall}: pin warning chỉ là cảnh báo MITM,
+        không được làm hỏng kết luận khi cert được gia hạn hợp lệ.
+  \item \code{log\_callback}: cho UI in real-time từng bước --- demo trực quan.
+\end{itemize}
+
+\subsection{Bước 1 --- Verify chữ ký bằng Root CA: \code{verify\_signature}}
+
+Bước 1 gom 3 việc: kiểm Trust Store, nối issuer$\to$subject, verify chữ ký:
+
+\begin{Verbatim}
+def verify_signature(cert, trusted_cas):
+    """Bước 1: Verify chữ ký server cert bằng Root CA public key trong Trust Store."""
+    if not trusted_cas:
+        return False, "Trust Store rỗng — không có Root CA để verify"
+    issuer_ca = _find_trusted_issuer(cert, trusted_cas)   # ca.subject == cert.issuer
+    if issuer_ca is None:
+        return False, ("Không tìm thấy Root CA tin cậy có subject khớp issuer="
+                       f"'{cert.issuer.rfc4514_string()}' trong Trust Store")
+    try:
+        _verify_signature_with_pubkey(
+            issuer_ca.public_key(), cert.signature,
+            cert.tbs_certificate_bytes, cert.signature_hash_algorithm)
+        return True, "Chữ ký HỢP LỆ — verified bằng Root CA ..."
+    except InvalidSignature:
+        return False, "Chữ ký KHÔNG hợp lệ — cert bị giả mạo hoặc tampered"
+\end{Verbatim}
+
+Ba trạng thái thoát: (1) Trust Store rỗng $\to$ FAIL; (2) không tìm thấy issuer
+khớp $\to$ FAIL (Root CA không tin cậy); (3) verify ném \code{InvalidSignature}
+$\to$ FAIL (cert bị sửa). Verify tính trên \code{tbs\_certificate\_bytes} (phần
+``To-Be-Signed''), nên chỉ cần 1 bit trong cert đổi là phát hiện ngay --- đây là
+nguyên lý mà flavor \code{tampered} chứng minh.
+
+\subsection{Bước 3 --- Hostname/SAN: \code{check\_hostname} \& wildcard}
+
+Bước 3 lấy SAN (DNS $+$ IP) rồi khớp; với DNS có hỗ trợ wildcard
+\code{*.example.com} qua \code{\_dnsname\_matches}:
+
+\begin{Verbatim}
+def check_hostname(cert, hostname):
+    """Bước 3: Hostname phải khớp với SAN."""
+    san = cert.extensions.get_extension_for_oid(
+        ExtensionOID.SUBJECT_ALTERNATIVE_NAME).value
+    dns_names   = san.get_values_for_type(x509.DNSName)
+    ip_addresses = [str(ip) for ip in san.get_values_for_type(x509.IPAddress)]
+    try:
+        ipaddress.ip_address(hostname)            # hostname là IP?
+        if hostname in ip_addresses: return True, "KHỚP (IP)"
+    except ValueError:
+        if any(_dnsname_matches(p, hostname) for p in dns_names):
+            return True, "KHỚP (DNS/wildcard)"
+    return False, f"Hostname '{hostname}' KHÔNG khớp với SAN"
+
+def _dnsname_matches(pattern, hostname):
+    pattern, hostname = pattern.lower().rstrip("."), hostname.lower().rstrip(".")
+    if pattern == hostname: return True
+    if not pattern.startswith("*."): return False
+    suffix = pattern[1:]                           # ".example.com"
+    return hostname.endswith(suffix) and hostname.count(".") == pattern.count(".")
+\end{Verbatim}
+
+\textbf{Ý chính:} wildcard chỉ phủ \emph{một} cấp con --- \code{*.a.com} khớp
+\code{x.a.com} nhưng không khớp \code{y.x.a.com} (kiểm bằng đếm số dấu chấm bằng
+nhau). IP thì khớp tuyệt đối, không có wildcard.
+
+\subsection{Bước 4 --- CRL: \code{check\_crl} \& \code{\_verify\_crl\_signature}}
+
+\begin{Verbatim}
+def check_crl(cert, trusted_cas):
+    """Bước 4: Tải CRL, verify chữ ký CRL bằng Root CA, đối chiếu serial."""
+    crl_ext = cert.extensions.get_extension_for_oid(
+        ExtensionOID.CRL_DISTRIBUTION_POINTS)         # ExtensionNotFound -> bỏ qua
+    crl_urls = [gn.value for dp in crl_ext.value if dp.full_name
+                for gn in dp.full_name
+                if isinstance(gn, x509.UniformResourceIdentifier)]
+    for url in crl_urls:
+        crl = x509.load_pem_x509_crl(_fetch_capped(url, _MAX_CRL_BYTES, timeout=5))
+        sig_ok, issuer_ca, err = _verify_crl_signature(crl, trusted_cas)
+        if not sig_ok:
+            return False, f"CRL không đáng tin từ {url}: {err}"
+        entry = crl.get_revoked_certificate_by_serial_number(cert.serial_number)
+        if entry is not None:
+            return False, "Chứng chỉ BỊ THU HỒI theo CRL ..."
+        return True, "Không có trong CRL; CRL signature OK theo Root CA"
+\end{Verbatim}
+
+Trước khi tin CRL phải verify \emph{chữ ký} của chính CRL (CRL cũng do Root CA ký
+qua \code{KeyUsage(crl\_sign)}), nếu không kẻ tấn công có thể đưa một CRL giả
+``rỗng''. Sau đó mới đối chiếu \code{cert.serial\_number} với danh sách thu hồi.
+Không có CRLDP $\Rightarrow$ bỏ qua (PASS) --- điểm yếu này được OCSP bù.
+
+\subsection{Bước 5 --- OCSP: \code{check\_ocsp}}
+
+\begin{Verbatim}
+def check_ocsp(cert):
+    """Bước 5: Gọi OCSP service kiểm tra trạng thái trực tuyến."""
+    aia = cert.extensions.get_extension_for_oid(
+        ExtensionOID.AUTHORITY_INFORMATION_ACCESS)    # ExtensionNotFound -> bỏ qua
+    ocsp_urls = [ad.access_location.value for ad in aia.value
+                 if ad.access_method == AuthorityInformationAccessOID.OCSP]
+    for url in ocsp_urls:
+        body = _fetch_capped(f"{url}?serial={cert.serial_number}",
+                             _MAX_OCSP_BYTES, timeout=5)
+        status = json.loads(body.decode()).get("status", "UNKNOWN")
+        if status == "GOOD":    return True,  f"OCSP status = GOOD (từ {url})"
+        if status == "REVOKED": return False, f"OCSP status = REVOKED (từ {url})"
+        return False, f"OCSP status không xác định: {status}"
+\end{Verbatim}
+
+OCSP hỏi \emph{một} cert theo serial qua URL trong AIA --- mới hơn và nhẹ hơn CRL.
+Scenario \code{revoked\_ocsp\_only} minh hoạ: OCSP biết cert đã thu hồi trong khi
+CRL chưa publish kịp $\Rightarrow$ B5 FAIL còn B4 PASS.
+
+\subsection{Lấy cert qua mạng + chống SSRF/DoS}
+
+Cert lấy qua socket; còn CRL/OCSP tải từ URL \emph{nằm trong cert} --- mà cert là
+dữ liệu không tin cậy, nên cần hai lớp guard:
+
+\begin{Verbatim}
+def fetch_certificate(host, port, timeout=5.0):
+    """Kết nối socket, gửi 'GET_CERT', nhận PEM. Trả (cert_bytes, peer_address)."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(timeout); s.connect((host, port))
+        peer_ip, peer_port = s.getpeername()[:2]      # địa chỉ THỰC đã kết nối
+        s.sendall(b"GET_CERT")
+        return _recv_blob(s), f"{peer_ip}:{peer_port}"
+
+def _validate_fetch_url(url):                          # chống SSRF
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):        # chặn file://, gopher://, ...
+        raise UnsafeURLError(f"Scheme '{parsed.scheme}' không cho phép")
+    if not parsed.hostname:
+        raise UnsafeURLError("URL không có hostname")
+
+def _fetch_capped(url, max_bytes, timeout=5.0):       # chống DoS
+    _validate_fetch_url(url)
+    with urllib.request.urlopen(url, timeout=timeout) as resp:
+        data = resp.read(max_bytes + 1)               # +1 để phát hiện vượt
+    if len(data) > max_bytes:
+        raise UnsafeURLError(f"Response > {max_bytes} bytes — từ chối (DoS)")
+    return data
+\end{Verbatim}
+
+\textbf{Ý chính:} chỉ cho \code{http/https} (chặn \code{file:///etc/passwd},
+\code{gopher://}\dots); cap kích thước (10MB cho CRL, 64KB cho OCSP). \code{peer\_address}
+ghi lại IP:port \emph{thực} đã kết nối, tách bạch với hostname người dùng nhập
+(có thể bị DNS đầu độc) --- phục vụ audit.
+
+\subsection{Bước phụ --- Pinning / TOFU: \code{check\_pinned}}
+
+Pinning ghi nhớ \emph{fingerprint} SHA-256 của cert để phát hiện cert bị tráo
+(MITM). Pin store v2 hỗ trợ rotation có overlap:
+
+\begin{Verbatim}
+def check_pinned(cert, hostname, base_dir="received_certs"):
+    """Pin store v2 — TOFU + rotation overlap. Advisory."""
+    store      = _load_pin_store(pin_path, hostname)   # tự migrate v1 -> v2
+    pruned_fps = _prune_expired_pins_inplace(store, now)  # bỏ pin đã hết hạn
+    pins       = store["pins"]
+    if not pins:                                        # (a) TOFU: lần đầu -> lưu
+        store["pins"].append(_build_pin_entry(cert, current_fp, now_iso))
+        return True, "Pin TẠO MỚI (TOFU) ..."
+    for pin in pins:                                    # (b) khớp -> OK
+        if pin["fingerprint_sha256"] == current_fp:
+            return True, "Pin KHỚP ..."
+    same_issuer = [p for p in pins if p.get("issuer") == current_issuer
+                                   or not p.get("issuer")]
+    if same_issuer:                                     # (c) cùng issuer -> rotation
+        store["pins"].append(_build_pin_entry(cert, current_fp, now_iso))
+        return True, "Pin ROTATION được chấp nhận ..."
+    return False, "Pin MISMATCH! ... Có thể đổi CA HỢP LỆ hoặc đang bị MITM."
+\end{Verbatim}
+
+\textbf{Ý chính:} (a) TOFU lưu pin lần đầu; (b) khớp $\to$ OK; (c) khác fingerprint
+nhưng cùng issuer $\to$ rotation hợp lệ (thêm pin mới, giữ pin cũ làm backup trong
+giai đoạn overlap); chỉ \emph{khác issuer hoàn toàn} mới trả \code{ok=False} (nghi
+MITM). Pin hết hạn tự bị prune. Đây là advisory vì đổi cert hợp lệ (renew/rotate
+key) rất bình thường.
+
+\subsection{Cert ngoài --- \code{save\_external\_cert} \& \code{parse\_cert\_summary}}
+
+Cho phép customer upload \emph{bất kỳ} cert X.509 nào để theo dõi $+$ verify.
+\code{save\_external\_cert} parse, tính SHA-256 fingerprint để chống upload trùng,
+và lưu DB:
+
+\begin{Verbatim}
+def save_external_cert(uploader_id, data, notes, db_path):
+    """Parse + lưu. Reject nếu cùng uploader đã upload cert có cùng fingerprint."""
+    cert = _parse_cert(data)                            # thử PEM rồi DER
+    pem_bytes = cert.public_bytes(Encoding.PEM)         # chuẩn hoá về 1 format
+    fp = _fingerprint_sha256(cert)                      # SHA-256 của DER
+    with transaction(db_path) as conn:
+        dup = conn.execute(
+            "SELECT id FROM external_certs "
+            "WHERE uploader_id = ? AND fingerprint_sha256 = ?",
+            (uploader_id, fp)).fetchone()
+        if dup:
+            raise ExternalCertError(f"Bạn đã upload cert này trước đó (#{dup['id']}).")
+        cur = conn.execute(
+            "INSERT INTO external_certs "
+            "(uploader_id, cert_pem, fingerprint_sha256, notes, uploaded_at) "
+            "VALUES (?, ?, ?, ?, ?)", (uploader_id, pem_bytes, fp, notes, now))
+    return {...}
+\end{Verbatim}
+
+\textbf{Hai điểm bảo mật phải nêu:} (1) \textbf{Dedup theo fingerprint per
+uploader} --- cùng người không upload trùng một cert. (2) \textbf{BOLA guard} ---
+\code{get\_external\_cert(cert\_id, uploader\_id, ...)} luôn có điều kiện
+\code{WHERE id=? AND uploader\_id=?}, nên user A không xem/xóa được cert của user
+B dù biết \code{cert\_id}. \code{parse\_cert\_summary} trả metadata (subject,
+issuer, serial, SAN, public key) để preview \emph{trước khi} lưu DB.
+
+\subsection{Verification Lab --- \code{ServerManager} (back-end)}
+
+\code{ServerManager} dựng nhiều socket server đồng thời, mỗi server phục vụ một
+\emph{flavor}. Mỗi server có 3 trục trạng thái độc lập:
+
+\begin{table}[h]
+\centering\small
+\renewcommand{\arraystretch}{1.25}
+\begin{tabularx}{\linewidth}{L{4.2cm} X}
+\toprule
+\textbf{Trục} & \textbf{Giá trị} \\
+\midrule
+\code{lifecycle} & valid / expired / revoked \\
+\code{revocation\_scope} & none / ocsp\_only / both \\
+\code{wire\_mutation} & none / tampered \\
+\bottomrule
+\end{tabularx}
+\caption{Mô hình 3 trục --- flavor là tổ hợp khởi tạo của 3 trục này.}
+\end{table}
+
+\begin{Verbatim}
+FLAVOR_TO_STATE = {
+    "valid":             ("valid",   "none",      "none"),
+    "expired":           ("expired", "none",      "none"),
+    "revoked_both":      ("revoked", "both",      "none"),
+    "revoked_ocsp_only": ("revoked", "ocsp_only", "none"),
+    "tampered":          ("valid",   "none",      "tampered"),
+}
+
+def add_server(self, name, port, flavor):
+    key = generate_rsa_keypair()
+    cert, serial = create_server_cert_signed_by_ca(   # Root CA ký, KHÔNG self-signed
+        server_private_key=key, ca_cert=self.issuer_cert,
+        ca_private_key=self.issuer_key, common_name="localhost",
+        dns_names=["localhost", "127.0.0.1"],
+        ocsp_url=self.ocsp_url, crl_url=self.crl_url, expired=(flavor=="expired"))
+    if flavor == "revoked_ocsp_only":                  # chỉ OCSP DB
+        revoke_serial_ocsp_only(serial, self.ocsp_db_path)
+    elif flavor == "revoked_both":                     # OCSP DB + publish CRL ngay
+        revoke_serial_ocsp_only(serial, self.ocsp_db_path)
+        build_and_publish_crl(self.issuer_cert, self.issuer_key, ...)
+    if flavor == "tampered":                           # lật 1 bit trong chữ ký
+        tampered_pem = tamper_cert_pem(original_pem); ... write ...
+    entry = ServerEntry(name, port, flavor, serial, cert_path, key_path)
+    self._start_socket_server(entry)                   # background thread
+\end{Verbatim}
+
+\textbf{Ý chính:} mỗi flavor sinh đúng một tình huống xác thực để demo. \code{tampered}
+lật 1 bit chữ ký $\Rightarrow$ B1 FAIL; \code{revoked\_ocsp\_only} đẩy serial vào
+OCSP DB nhưng \emph{không} publish CRL $\Rightarrow$ B5 FAIL mà B4 PASS. Socket
+server trả PEM khi nhận \code{GET\_CERT}:
+
+\begin{Verbatim}[numbers=none]
+def _handle_conn(self, conn, addr, entry):
+    data = conn.recv(1024).decode(errors="ignore").strip()
+    if data == "GET_CERT":
+        with open(entry.cert_path, "rb") as f: cert_pem = f.read()
+        conn.sendall(len(cert_pem).to_bytes(4, "big"))   # 4-byte length prefix
+        conn.sendall(cert_pem)
+\end{Verbatim}
+
+\subsection{Verification Lab --- \code{renew\_server} (rotate key)}
+
+\code{renew\_server} sinh cert mới (ký lại bởi Root CA), ghi serial cũ vào
+\code{previous\_serials} để audit, và cho client thấy fingerprint mới ở lần
+\code{GET\_CERT} kế tiếp --- minh hoạ rotation hợp lệ phía pin store:
+
+\begin{Verbatim}
+def renew_server(self, name, rotate_key=True, validity_days=365):
+    entry = self.servers.get(name)
+    if entry.wire_mutation == "tampered":   raise ValueError(...)   # untamper trước
+    if entry.lifecycle == "revoked":        raise NotImplementedError(...)
+    old_serial = entry.serial
+    key = generate_rsa_keypair() if rotate_key else load_private_key(entry.key_path)
+    cert, new_serial = create_server_cert_signed_by_ca(..., expired=False)
+    save_cert_and_key(cert, key, entry.cert_path, entry.key_path)   # ghi đè
+    entry.previous_serials.append(old_serial)   # audit oldest -> newest
+    entry.serial    = new_serial
+    entry.lifecycle = "valid"                    # flavor GIỮ NGUYÊN
+    return entry
+\end{Verbatim}
+
+\subsection{Verification Lab --- GUI \code{lifecycle\_demo}}
+
+GUI Tkinter nhúng vào dashboard admin qua \code{launch\_as\_toplevel}. Khi bấm
+Verify, \code{\_do\_verify} chạy trên thread nền để không treo UI, rồi cập nhật
+banner PASS/FAIL qua \code{root.after}:
+
+\begin{Verbatim}
+def _do_verify(self, entry):
+    host = "localhost"
+    cert_bytes, peer_address = fetch_certificate(host, entry.port)  # socket
+    overall, results, cert_obj = verify_certificate_full(
+        cert_bytes, host, trust_store_dir=self.trust_store_dir,
+        log_callback=self._thread_log, peer_address=peer_address)
+    for step_name, ok, _ in results:
+        self._thread_log(f"   [{'PASS' if ok else 'FAIL'}] {step_name}")
+    self.root.after(0, self.set_result, "pass" if overall else "fail")  # banner
+
+def launch_as_toplevel(parent):
+    """Mở Lab như Toplevel của app admin đã chạy mainloop."""
+    win = tk.Toplevel(parent); win.transient(parent); App(win); return win
+\end{Verbatim}
+
+Lab dùng \emph{thư mục và port riêng} (\code{lab/}, OCSP 9888, CRL 9889) để không
+đụng hạ tầng Prod (8888/8889). Khi đóng, file cert được giữ lại (\code{cleanup\_files=False})
+để pin warning ổn định qua các lần mở/đóng GUI.
+
+\subsection{UI upload --- \code{upload\_external\_view}}
+
+UI Customer cho paste/Browse PEM, preview rồi lưu; tab ``Của tôi'' liệt kê và mở
+\code{VerifyExternalDialog} chạy 5 bước với Trust Store của hệ thống:
+
+\begin{Verbatim}
+def _run(self):                                        # trong VerifyExternalDialog
+    hostname = self.host_entry.get().strip()
+    publish_active_to_trust_store(self.app.db_path, TRUST_STORE_DIR)  # đảm bảo có Root CA
+    overall, results, _ = verify_certificate_full(
+        bytes(self.cert_rec["cert_pem"]), hostname=hostname,
+        trust_store_dir=TRUST_STORE_DIR, log_callback=self._log,
+        pin_dir="received_certs", peer_address=None)
+    for step_name, ok, _ in results:
+        self._log(f"   [{'PASS' if ok else 'FAIL'}] {step_name}",
+                  "ok" if ok else "fail")
+    self._set_banner("pass" if overall else "fail")
+\end{Verbatim}
+
+\subsection{LAN mode --- server nhận CSR: \code{submit\_remote\_csr}}
+
+Máy Admin nhận CSR từ xa, login/auto-register customer, parse $+$ verify chữ ký
+CSR, rồi chèn vào hàng đợi CSR như một request bình thường:
+
+\begin{Verbatim}
+def submit_remote_csr(*, username, password, csr_pem, key_name, db_path):
+    """Nhận CSR từ máy khác, tạo csr_requests pending. Private key KHÔNG rời client."""
+    csr = parse_csr(csr_bytes)
+    if not verify_csr_signature(csr):                  # CSR tự ký bằng private key client
+        raise RemoteCSRError("CSR signature is invalid")
+    common_name = _csr_common_name(csr); san_list = _csr_san_list(csr)
+    public_key_pem = csr.public_key().public_bytes(
+        serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo)
+    user = _login_or_register_customer(username, password, db_path)
+    with transaction(db_path) as conn:
+        cur = conn.execute(                            # schema cần 1 row customer_keys
+            "INSERT INTO customer_keys (owner_id, name, algorithm, key_size, "
+            " public_key_pem, encrypted_private_key, gcm_nonce, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (user["id"], final_key_name, "RSA", key_size,
+             public_key_pem, b"", b"", now))           # private key RỖNG
+        key_id = cur.lastrowid
+        cur = conn.execute(
+            "INSERT INTO csr_requests (requester_id, customer_key_id, common_name, "
+            " san_list_json, csr_pem, status, submitted_at) "
+            "VALUES (?, ?, ?, ?, ?, 'pending', ?)",
+            (user["id"], key_id, common_name, san_json, csr_bytes, now))
+\end{Verbatim}
+
+\textbf{Ý chính cốt lõi:} \code{encrypted\_private\_key=b""} --- private key
+\emph{không bao giờ} rời máy client. Admin chỉ nhận public key (trong CSR) $+$
+chữ ký CSR để chứng minh client \emph{sở hữu} private key tương ứng. Đây chính là
+giá trị của mô hình CSR.
+
+\subsection{LAN mode --- HTTP API: \code{csr\_api\_server}}
+
+API HTTP chạy trên máy Admin, routing theo path, bảo vệ bằng token và kiểm tra
+bind address:
+
+\begin{Verbatim}
+def _is_loopback_bind(host):
+    host = host.strip().lower()
+    if host in ("localhost", "127.0.0.1", "::1"): return True
+    try:    return ipaddress.ip_address(host).is_loopback
+    except ValueError: return False
+
+def start_csr_api_server(*, db_path, host=..., port=..., token=..., log_callback=None):
+    if not token and not _is_loopback_bind(host):      # ép token khi mở ra LAN
+        raise ValueError("CSR API token is required when binding to a LAN/public address.")
+    class Handler(BaseHTTPRequestHandler):
+        def _authorized(self):
+            if not token: return True
+            return self.headers.get("X-CSR-API-Token") == token
+        def do_POST(self):
+            if not self._authorized():
+                self._send_json(401, {"ok": False, "error": "unauthorized"}); return
+            payload = self._read_json_payload()        # cap 512KB chống DoS
+            if self.path == "/api/csr/submit":
+                rec = submit_remote_csr(username=..., password=..., csr_pem=..., db_path=db_path)
+                self._send_json(201, {"ok": True, "csr": rec}); return
+\end{Verbatim}
+
+\textbf{Ba lớp bảo vệ:} (1) \code{\_is\_loopback\_bind} buộc phải có token nếu
+bind ra địa chỉ LAN/công khai (chỉ localhost mới được phép không token); (2)
+\code{\_authorized} kiểm header \code{X-CSR-API-Token}; (3) \code{\_read\_json\_payload}
+cap 512KB chống request khổng lồ. Lỗi nghiệp vụ trả 400, lỗi không lường trả 500.
+
+\subsection{LAN mode --- client gửi: \code{remote\_csr\_client}}
+
+Hàm \code{\_post\_json} là lõi: serialize JSON, gắn token, xử lý mọi lỗi mạng
+thành \code{RemoteCSRClientError}, kiểm trường \code{ok}:
+
+\begin{Verbatim}
+def _post_json(*, api_url, path, payload, token="", timeout=10.0):
+    req = urllib.request.Request(
+        api_url.rstrip("/") + path, data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"}, method="POST")
+    if token: req.add_header("X-CSR-API-Token", token)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        raise RemoteCSRClientError(f"HTTP {e.code}: {e.read().decode('utf-8','replace')}")
+    except urllib.error.URLError as e:
+        raise RemoteCSRClientError(f"Cannot connect to Admin API: {e}")
+    if not data.get("ok"):
+        raise RemoteCSRClientError(str(data.get("error", "remote API failed")))
+    return data
+\end{Verbatim}
+
+\subsection{CLI --- \code{submit\_csr\_lan.py} \& \code{dump\_cert.py}}
+
+\code{submit\_csr\_lan.py} là client CLI hoàn chỉnh: sinh keypair, build CSR, lưu
+private key \emph{tại chỗ}, rồi POST:
+
+\begin{Verbatim}
+key = generate_rsa_keypair(args.key_size)
+csr = build_csr(key, common_name=args.domain, san_list=san_list)
+csr_pem = csr_to_pem(csr)
+key_pem = key.private_bytes(serialization.Encoding.PEM,
+    serialization.PrivateFormat.PKCS8, serialization.NoEncryption())
+key_path.write_bytes(key_pem); csr_path.write_bytes(csr_pem)   # private key Ở LẠI máy B
+payload = {"username": ..., "password": ..., "key_name": ..., "csr_pem": csr_pem.decode("ascii")}
+req = urllib.request.Request(args.server.rstrip("/") + "/api/csr/submit",
+    data=json.dumps(payload).encode("utf-8"),
+    headers={"Content-Type": "application/json"}, method="POST")
+if args.token: req.add_header("X-CSR-API-Token", args.token)
+\end{Verbatim}
+
+\code{dump\_cert.py} xuất một cert từ DB ra file PEM để test luồng upload/verify:
+
+\begin{Verbatim}[numbers=none]
+# python scripts/dump_cert.py            -> list cert; python ... <id> -> dump PEM
+row = conn.execute("SELECT cert_pem, common_name, serial_hex "
+                   "FROM issued_certs WHERE id = ?", (cert_id,)).fetchone()
+Path(out_path).write_bytes(pem if isinstance(pem, bytes) else pem.encode())
+\end{Verbatim}
+
+%==============================================================================
+\section{Cần nắm để vấn đáp}
+%==============================================================================
+
+\begin{qabox}
+\textbf{Hỏi: 5 bước xác thực từng bước làm gì?}\\
+\textbf{Đáp:} \textbf{B1} verify chữ ký cert bằng public key Root CA trong Trust
+Store (cert được CA tin cậy ký, không bị sửa). \textbf{B2} kiểm thời hạn Not
+Before/Not After. \textbf{B3} hostname khớp SAN (DNS, wildcard 1 cấp, hoặc IP).
+\textbf{B4} tải CRL, verify chữ ký CRL, đối chiếu serial xem có bị thu hồi.
+\textbf{B5} hỏi OCSP trạng thái trực tuyến GOOD/REVOKED. Kết luận
+\code{overall = AND} của cả 5 bước.
+\end{qabox}
+
+\begin{qabox}
+\textbf{Hỏi: Trust Store là gì và vì sao cần?}\\
+\textbf{Đáp:} Là tập các Root CA mà client \emph{chủ động} chọn tin cậy. Verify
+chữ ký chỉ chứng minh ``cert do ai đó ký'', chứ không trả lời ``ai đó có đáng tin
+không''. Trust Store cung cấp điểm neo tin cậy: chỉ cert leo tới được một Root CA
+\emph{trong} Trust Store mới được chấp nhận. Trust Store rỗng $\Rightarrow$ B1
+FAIL ngay.
+\end{qabox}
+
+\begin{qabox}
+\textbf{Hỏi: CRL và OCSP khác nhau thế nào? Vì sao cần cả hai?}\\
+\textbf{Đáp:} CRL là \emph{danh sách} serial bị thu hồi, client tải về rồi tra
+--- offline được nhưng có thể cũ (publish theo chu kỳ). OCSP hỏi \emph{trực
+tuyến} trạng thái của \emph{một} cert --- mới hơn, nhẹ hơn nhưng cần mạng. Dùng cả
+hai để bù khuyết: OCSP bắt kịp thu hồi sớm, CRL làm fallback. Scenario
+\code{revoked\_ocsp\_only} cho thấy OCSP biết trước khi CRL kịp publish.
+\end{qabox}
+
+\begin{qabox}
+\textbf{Hỏi: Pinning/TOFU là gì và vì sao chỉ là advisory?}\\
+\textbf{Đáp:} TOFU = tin cert thấy lần đầu rồi ghi nhớ fingerprint SHA-256; lần
+sau cert đổi fingerprint mà \emph{khác issuer} thì cảnh báo (nghi MITM). Nó là
+advisory (không tính vào \code{overall}) vì đổi cert hợp lệ (renew/rotate key) rất
+bình thường --- nếu để nó làm FAIL thì sẽ báo động giả mỗi lần gia hạn. Store v2
+phân biệt rotation (cùng issuer $\to$ thêm pin, giữ pin cũ overlap) với mismatch
+(khác issuer).
+\end{qabox}
+
+\begin{qabox}
+\textbf{Hỏi: Vì sao phải chặn SSRF và giới hạn kích thước khi tải CRL/OCSP?}\\
+\textbf{Đáp:} Vì URL của CRL/OCSP \emph{nằm trong cert} --- do người phát hành
+cert quyết định, mà cert có thể độc hại. Không guard thì kẻ tấn công đặt URL kiểu
+\code{file:///etc/passwd} (SSRF, đọc file nội bộ) hoặc trỏ tới response khổng lồ
+(DoS). \code{\_validate\_fetch\_url} chỉ cho \code{http/https}; \code{\_fetch\_capped}
+cap size (10MB CRL, 64KB OCSP).
+\end{qabox}
+
+\begin{qabox}
+\textbf{Hỏi: Kiến trúc LAN CSR đảm bảo private key không rời máy client thế nào?}\\
+\textbf{Đáp:} Máy client tự sinh keypair và \emph{lưu private key tại chỗ}; chỉ
+gửi đi CSR --- chứa public key và một chữ ký do private key tạo. Server Admin
+verify chữ ký CSR (\code{verify\_csr\_signature}) để chắc chắn client thực sự sở
+hữu private key, rồi cấp cert cho public key đó. Trong DB, cột
+\code{encrypted\_private\_key} để rỗng (\code{b""}). Admin không bao giờ thấy
+private key.
+\end{qabox}
+
+\begin{qabox}
+\textbf{Hỏi: Flavor \code{tampered} chứng minh điều gì?}\\
+\textbf{Đáp:} Nó lật 1 bit trong cert đã được Root CA ký. Vì chữ ký được tính
+trên \code{tbs\_certificate\_bytes}, chỉ 1 bit đổi là giá trị verify không khớp
+$\Rightarrow$ \code{InvalidSignature} $\Rightarrow$ B1 FAIL. Điều này chứng minh
+trực quan rằng \emph{không thể sửa cert sau khi đã ký} mà không bị phát hiện ---
+chính là tính toàn vẹn mà chữ ký số bảo đảm.
+\end{qabox}
+
+\begin{qabox}
+\textbf{Hỏi: Vì sao API LAN ép phải có token khi bind ra địa chỉ không phải
+loopback?}\\
+\textbf{Đáp:} Bind \code{0.0.0.0} hay IP LAN nghĩa là máy khác trên mạng truy cập
+được. Nếu không xác thực, ai cũng có thể spam CSR vào hàng đợi Admin.
+\code{\_is\_loopback\_bind} cho phép chạy không token \emph{chỉ} khi localhost
+(an toàn vì chỉ máy mình), còn mở ra LAN thì \code{start\_csr\_api\_server} raise
+\code{ValueError} buộc đặt token, kiểm qua header \code{X-CSR-API-Token}.
+\end{qabox}
+
+%==============================================================================
+\section{Test case và demo}
+%==============================================================================
+
+\subsection{Bảng test case của cụm}
+
+\begin{table}[h]
+\centering\small
+\renewcommand{\arraystretch}{1.3}
+\begin{tabularx}{\linewidth}{L{3.4cm} L{4.4cm} X}
+\toprule
+\textbf{Test case} & \textbf{Cách dựng} & \textbf{Kỳ vọng} \\
+\midrule
+\code{valid} & Lab: add server flavor \code{valid} & \code{overall=True}, 5 bước PASS \\
+\code{expired} & flavor \code{expired} & FAIL B2 (thời hạn) \\
+\code{revoked\_both} & flavor \code{revoked\_both} & FAIL B4 (CRL) và B5 (OCSP) \\
+\code{revoked\_ocsp\_only} & flavor \code{revoked\_ocsp\_only} & FAIL B5; B4 PASS \\
+\code{tampered} & flavor \code{tampered} & FAIL B1 (\code{InvalidSignature}) \\
+Trust store rỗng & verify với \code{trusted\_cas=[]} & FAIL B1 (Trust Store rỗng) \\
+Upload cert ngoài & UI Customer paste/Browse PEM & lưu OK, verify 5 bước \\
+Upload trùng & upload lại cert cũ & \code{ExternalCertError} (dedup) \\
+SSRF guard & cert có CRLDP \code{file://...} & \code{UnsafeURLError}, B4 FAIL \\
+LAN submit CSR & \code{submit\_csr\_lan.py} & csr\_requests pending trên Admin \\
+\bottomrule
+\end{tabularx}
+\caption{Test case bao phủ 5 bước, Lab, cert ngoài và LAN mode.}
+\end{table}
+
+\subsection{Đoạn unit test gợi ý}
+
+Unit test nhắm thẳng vào logic của cụm, độc lập hạ tầng socket:
+
+\begin{Verbatim}
+from core.verify import verify_signature, _dnsname_matches, _validate_fetch_url, UnsafeURLError
+from cryptography import x509
+
+def test_trust_store_rong_thi_fail():
+    cert = x509.load_pem_x509_certificate(open("lab/Server-A.crt", "rb").read())
+    ok, msg = verify_signature(cert, trusted_cas=[])      # trust store rỗng
+    assert not ok and "rỗng" in msg
+
+def test_wildcard_chi_phu_mot_cap():
+    assert _dnsname_matches("*.a.com", "x.a.com") is True
+    assert _dnsname_matches("*.a.com", "y.x.a.com") is False   # 2 cấp -> không khớp
+
+def test_ssrf_chan_scheme_la():
+    try:
+        _validate_fetch_url("file:///etc/passwd")
+        assert False, "phải raise UnsafeURLError"
+    except UnsafeURLError:
+        pass
+\end{Verbatim}
+
+\subsection{Lệnh chạy demo/test}
+
+\begin{Verbatim}[numbers=none]
+# Cài thư viện
+pip install -r requirements.txt
+pip install pytest
+
+# Chạy bộ scenario end-to-end (5 bước + Lab)
+$env:PYTHONIOENCODING = "utf-8"
+python tests\test_scenarios.py
+python tests\test_m9_external_crl.py      # cert ngoài + CRL
+
+# Mở app + Verification Lab trong Admin Dashboard
+python main.py
+
+# Demo LAN: máy A chạy app (bật CSR API), máy B chạy:
+python scripts\submit_csr_lan.py --server http://192.168.1.10:8787 ^
+  --username alice --password AlicePw123 --domain myshop.com ^
+  --san myshop.com,www.myshop.com --token <TOKEN>
+
+# Xuất 1 cert ra PEM để test upload/verify
+python scripts\dump_cert.py            # list
+python scripts\dump_cert.py 3          # dump cert id=3
+\end{Verbatim}
+
+\subsection{Kịch bản demo trực tiếp}
+
+\begin{enumerate}
+  \item Mở Verification Lab, thêm 4 server: \code{valid}, \code{expired},
+        \code{revoked\_both}, \code{tampered}; Verify từng cái, đọc banner
+        PASS/FAIL và log 5 bước.
+  \item Bấm Renew một server \code{valid}, Verify lại $\to$ pin store báo
+        ROTATION được chấp nhận (cùng issuer).
+  \item Customer upload một cert (dump bằng \code{dump\_cert.py}), Verify 5 bước.
+  \item Máy B chạy \code{submit\_csr\_lan.py} $\to$ Admin refresh CSR Queue thấy
+        request pending $\to$ duyệt cấp cert.
+\end{enumerate}
+
+%==============================================================================
+\section{Tích hợp vào chương trình chung}
+%==============================================================================
+
+Cụm này là \emph{mặt phía client} của toàn hệ thống và kết nối với phần CA như sau:
+
+\begin{itemize}
+  \item \textbf{Đầu vào cert}: từ socket (\code{fetch\_certificate}), từ DB upload
+        (\code{external\_certs}), hoặc cert do Admin cấp từ CSR gửi qua LAN.
+  \item \textbf{Hợp đồng đầu ra} của \code{verify\_certificate\_full}:
+        \code{(overall\_pass: bool, results: list[(name, ok, msg)], cert)}. Mọi UI
+        (Lab GUI, \code{VerifyExternalDialog}) chỉ cần lặp \code{results} để in
+        bảng PASS/FAIL và dùng \code{overall\_pass} tô màu banner.
+  \item \textbf{Phụ thuộc vào nhóm CA}: Trust Store được nạp từ thư mục mà Admin
+        \code{publish\_active\_to\_trust\_store}/\code{publish\_root\_ca\_to\_trust\_store}
+        ghi ra; CRL/OCSP server (Prod 8889/8888, Lab 9889/9888) cung cấp dữ liệu
+        thu hồi cho B4/B5.
+  \item \textbf{LAN mode ghép vào CSR workflow}: \code{submit\_remote\_csr} chèn
+        \code{csr\_requests} status \code{pending} đúng schema, nên CSR Queue UI và
+        \code{csr\_admin} của Admin duyệt như request nội bộ --- không cần code
+        riêng cho phê duyệt.
+\end{itemize}
+
+\begin{notebox}
+\textbf{Vì sao đầu ra là \code{list of tuple} chứ không chỉ \code{bool}?} Để UI và
+test \emph{không} phải gọi lại từng hàm con: chỉ cần lặp \code{results} là có đủ
+tên bước, trạng thái và thông điệp để hiển thị/assert. Tách dữ liệu (results) khỏi
+trình bày (UI).
+\end{notebox}
+
+%==============================================================================
+\section{Bổ sung sau rà soát: API LAN đầy đủ \& chi tiết khác}
+
+\subsection{LAN không chỉ ``nộp CSR'' --- API customer self-service đầy đủ}
+
+\begin{warnbox}
+Điểm dễ bị hỏi: \textbf{chế độ LAN là một API customer self-service hoàn chỉnh}
+qua HTTP, không phải chỉ \code{/api/csr/submit}. Khách ở máy B có thể tự theo dõi
+CSR/cert, gửi \& xem yêu cầu thu hồi, và tải CRL --- tất cả qua mạng tới máy Admin.
+\end{warnbox}
+
+\begin{table}[h]
+\centering\scriptsize
+\renewcommand{\arraystretch}{1.25}
+\begin{tabularx}{\linewidth}{L{3.6cm} L{3.4cm} X}
+\toprule
+\textbf{Endpoint (HTTP)} & \textbf{Service (\code{remote\_csr})} & \textbf{Ý nghĩa} \\
+\midrule
+\code{GET /health} & --- & Pre-flight: kiểm tra Admin API sống (\code{check\_admin\_api\_health}). \\
+\code{POST /api/csr/submit} & \code{submit\_remote\_csr} & Nộp CSR (\emph{auto-register} nếu máy mới). \\
+\code{POST /api/customer/csrs} & \code{list\_remote\_csrs} & Liệt kê CSR của chính mình. \\
+\code{POST /api/customer/csr/detail} & \code{get\_remote\_csr\_detail} & Chi tiết 1 CSR. \\
+\code{POST /api/customer/certs} & \code{list\_remote\_certs} & Liệt kê cert đã cấp. \\
+\code{POST /api/customer/cert/detail} & \code{get\_remote\_cert\_detail} & Chi tiết 1 cert. \\
+\code{POST /api/customer/revoke/submit} & \code{submit\_remote\_revocation\_request} & Gửi yêu cầu thu hồi. \\
+\code{POST /api/customer/revoke/requests} & \code{list\_remote\_revocation\_requests} & Xem các yêu cầu thu hồi. \\
+\code{POST /api/crl/current} & (\code{crl\_publish}) & Tải CRL hiện hành qua mạng (client: \code{get\_crl\_from\_admin\_api}). \\
+\bottomrule
+\end{tabularx}
+\caption{9 endpoint của Admin API LAN; client gọi qua các hàm \code{*\_from\_admin\_api} trong \code{remote\_csr\_client.py}.}
+\end{table}
+
+\textbf{Khác biệt bảo mật then chốt.} Chỉ \code{/api/csr/submit} dùng
+\code{\_login\_or\_register\_customer} (\emph{auto-register} cho máy mới lần đầu
+thuận tiện); \emph{mọi} endpoint còn lại dùng \code{\_login\_customer} ---
+\textbf{login bắt buộc}, không tạo tài khoản ngoài ý muốn, và bắt buộc
+\code{role == "customer"}. Token API + bind loopback (\code{\_is\_loopback\_bind})
+áp dụng cho tất cả.
+
+\textbf{Ma trận mã trạng thái} (\code{csr\_api\_server.do\_POST}, cap payload 512KB):
+
+\begin{table}[h]
+\centering\footnotesize
+\begin{tabularx}{\linewidth}{L{2.2cm} X}
+\toprule \textbf{Mã} & \textbf{Khi nào} \\ \midrule
+\code{201} & Tạo mới thành công (submit CSR / revoke). \\
+\code{200} & Đọc thành công (list/detail/CRL). \\
+\code{401} & Sai/thiếu token (\code{\_authorized} fail). \\
+\code{400} & JSON hỏng, id sai kiểu, hoặc lỗi nghiệp vụ (\code{RemoteCSRError}). \\
+\code{404} & Path/đối tượng không tồn tại. \\
+\code{500} & Lỗi không lường trước. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{Vài chi tiết verify dễ bị hỏi}
+
+\begin{itemize}
+  \item \textbf{\code{prune\_expired\_pins(hostname, base\_dir)}} (public): ngoài
+        auto-prune bên trong \code{check\_pinned}, còn hàm này dọn pin hết hạn cho
+        một host \emph{theo yêu cầu} (trả về số pin xóa + list fingerprint), dùng
+        bảo trì pin store mà không phải chạy lại 5 bước.
+  \item \textbf{\code{check\_hostname} còn một nhánh khớp \emph{exact} cuối}: sau khi
+        thử IP và wildcard, code còn so trực tiếp \code{hostname in dns\_names} /
+        \code{ip\_addresses} --- bắt trường hợp hostname là tên DNS thường (không
+        wildcard) khớp đúng một SAN.
+\end{itemize}
+
+%==============================================================================
+\section{Checklist chuẩn bị vấn đáp}
+%==============================================================================
+
+\begin{itemize}
+  \item[\textbf{$\square$}] Mở \code{src/core/verify.py}, chỉ đúng 6 hàm chính:
+        \code{verify\_signature}, \code{check\_validity}, \code{check\_hostname},
+        \code{check\_crl}, \code{check\_ocsp}, \code{verify\_certificate\_full}.
+  \item[\textbf{$\square$}] Giải thích được từng bước trong 5 bước và vì sao
+        \code{overall = all(...)}; vì sao pin là advisory.
+  \item[\textbf{$\square$}] Phân biệt CRL vs OCSP; giải thích scenario
+        \code{revoked\_ocsp\_only}.
+  \item[\textbf{$\square$}] Giải thích guard SSRF/DoS (\code{\_validate\_fetch\_url},
+        \code{\_fetch\_capped}) và lý do URL trong cert không tin cậy.
+  \item[\textbf{$\square$}] Giải thích wildcard 1 cấp trong \code{\_dnsname\_matches}.
+  \item[\textbf{$\square$}] Trình bày mô hình 3 trục của \code{ServerManager} và
+        ý nghĩa từng flavor (đặc biệt \code{tampered}).
+  \item[\textbf{$\square$}] Giải thích cert ngoài: dedup theo fingerprint $+$ BOLA
+        guard trong \code{external\_certs}.
+  \item[\textbf{$\square$}] Giải thích kiến trúc LAN: private key không rời client;
+        token $+$ \code{\_is\_loopback\_bind} trong \code{csr\_api\_server}.
+  \item[\textbf{$\square$}] Chạy được \code{python tests\textbackslash test\_scenarios.py}
+        và \code{test\_m9\_external\_crl.py}.
+  \item[\textbf{$\square$}] Demo trực tiếp: Lab (valid/expired/revoked/tampered),
+        upload cert verify, gửi CSR qua LAN.
+\end{itemize}
+
+\vspace{0.6cm}
+\begin{center}
+{\color{accent}\rule{0.5\linewidth}{0.8pt}}\\[0.3cm]
+{\small\itshape Hết phần phân công chi tiết — Phạm Minh Quân}
+\end{center}
+
+\end{document}

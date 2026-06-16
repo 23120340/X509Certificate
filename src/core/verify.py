@@ -23,11 +23,10 @@ from urllib.parse import urlparse
 
 from cryptography import x509
 from cryptography.x509.oid import ExtensionOID, AuthorityInformationAccessOID
-from cryptography.hazmat.primitives.asymmetric import padding, rsa
-from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.serialization import Encoding
 from cryptography.exceptions import InvalidSignature
 
+from core import keyalg
 from core.ca import load_trust_store
 
 
@@ -115,18 +114,11 @@ def fetch_certificate(host: str, port: int, timeout: float = 5.0):
 
 def _verify_signature_with_pubkey(public_key, signature, tbs_bytes, hash_algorithm):
     """
-    Gọi public_key.verify(...) đúng tham số tùy loại khóa.
-    Raise InvalidSignature nếu chữ ký sai.
+    Gọi public_key.verify(...) đúng tham số tùy loại khóa (RSA/ECDSA/Ed25519).
+    Raise InvalidSignature nếu chữ ký sai. Delegate sang core.keyalg để xử lý
+    nhất quán — ECDSA cần ec.ECDSA(hash), Ed25519 không dùng hash.
     """
-    if isinstance(public_key, rsa.RSAPublicKey):
-        public_key.verify(
-            signature,
-            tbs_bytes,
-            padding.PKCS1v15(),
-            hash_algorithm,
-        )
-    else:
-        public_key.verify(signature, tbs_bytes, hash_algorithm)
+    keyalg.verify_with_public_key(public_key, signature, tbs_bytes, hash_algorithm)
 
 
 def _find_trusted_issuer(cert, trusted_cas):

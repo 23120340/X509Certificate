@@ -19,13 +19,30 @@ from datetime import datetime, timedelta, timezone
 
 from cryptography import x509
 from cryptography.x509.oid import NameOID, AuthorityInformationAccessOID, ExtendedKeyUsageOID
-from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
+
+from core import keyalg
 
 
 def generate_rsa_keypair(key_size: int = 2048):
     """Sinh cặp khóa RSA. Trả về private key (public key nằm bên trong)."""
     return rsa.generate_private_key(public_exponent=65537, key_size=key_size)
+
+
+def _tls_server_key_usage(public_key) -> x509.KeyUsage:
+    """
+    KeyUsage cho TLS server end-entity cert. `key_encipherment` chỉ có nghĩa
+    với RSA (RSA key transport); với khóa ECDSA/Ed25519 (chỉ ký) phải TẮT bit
+    này để cert đúng về mặt ngữ nghĩa. `digital_signature` luôn bật.
+    """
+    return x509.KeyUsage(
+        digital_signature=True,
+        key_encipherment=isinstance(public_key, rsa.RSAPublicKey),
+        content_commitment=False, data_encipherment=False,
+        key_agreement=False, key_cert_sign=False, crl_sign=False,
+        encipher_only=False, decipher_only=False,
+    )
 
 
 def _server_subject(common_name: str) -> x509.Name:
@@ -48,6 +65,7 @@ def create_server_cert_signed_by_ca(
     crl_url: "str | None" = None,
     validity_days: int = 365,
     expired: bool = False,
+    hash_algorithm=None,
 ):
     """
     Tạo chứng chỉ X.509 v3 cho server, KÝ bằng Root CA.
@@ -94,12 +112,7 @@ def create_server_cert_signed_by_ca(
         .not_valid_after(not_after)
         .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
         .add_extension(
-            x509.KeyUsage(
-                digital_signature=True, key_encipherment=True,
-                content_commitment=False, data_encipherment=False,
-                key_agreement=False, key_cert_sign=False, crl_sign=False,
-                encipher_only=False, decipher_only=False,
-            ),
+            _tls_server_key_usage(server_private_key.public_key()),
             critical=True,
         )
         .add_extension(
@@ -138,7 +151,10 @@ def create_server_cert_signed_by_ca(
         )
     )
 
-    certificate = builder.sign(private_key=ca_private_key, algorithm=hashes.SHA256())
+    certificate = builder.sign(
+        private_key=ca_private_key,
+        algorithm=keyalg.signing_algorithm(ca_private_key, hash_algorithm),
+    )
     return certificate, serial_number
 
 
@@ -150,6 +166,7 @@ def create_self_signed_cert(
     crl_url: "str | None" = None,
     validity_days: int = 365,
     expired: bool = False,
+    hash_algorithm=None,
 ):
     """
     LEGACY: Tạo chứng chỉ X.509 v3 self-signed (issuer == subject).
@@ -223,7 +240,10 @@ def create_self_signed_cert(
         )
     )
 
-    certificate = builder.sign(private_key=private_key, algorithm=hashes.SHA256())
+    certificate = builder.sign(
+        private_key=private_key,
+        algorithm=keyalg.signing_algorithm(private_key, hash_algorithm),
+    )
     return certificate, serial_number
 
 
@@ -253,6 +273,7 @@ def _build_end_entity_cert(
     validity_days: int,
     ocsp_url: str,
     crl_url: str,
+    hash_algorithm=None,
 ):
     """
     Internal helper — build cert end-entity với 1 cấu hình extensions cố định
@@ -277,12 +298,7 @@ def _build_end_entity_cert(
         .not_valid_after(now + timedelta(days=validity_days))
         .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
         .add_extension(
-            x509.KeyUsage(
-                digital_signature=True, key_encipherment=True,
-                content_commitment=False, data_encipherment=False,
-                key_agreement=False, key_cert_sign=False, crl_sign=False,
-                encipher_only=False, decipher_only=False,
-            ),
+            _tls_server_key_usage(public_key),
             critical=True,
         )
         .add_extension(
@@ -324,7 +340,10 @@ def _build_end_entity_cert(
         )
     )
 
-    cert = builder.sign(private_key=ca_private_key, algorithm=hashes.SHA256())
+    cert = builder.sign(
+        private_key=ca_private_key,
+        algorithm=keyalg.signing_algorithm(ca_private_key, hash_algorithm),
+    )
     return cert, serial_number
 
 
@@ -345,6 +364,7 @@ def issue_cert_from_csr(
     validity_days: int = 365,
     ocsp_url: "str | None" = None,
     crl_url: "str | None"  = None,
+    hash_algorithm=None,
 ):
     """
     Phát hành cert end-entity từ CSR đã được CSR-owner ký.
@@ -371,6 +391,7 @@ def issue_cert_from_csr(
         ca_cert=ca_cert, ca_private_key=ca_private_key,
         validity_days=validity_days,
         ocsp_url=ocsp_url, crl_url=crl_url,
+        hash_algorithm=hash_algorithm,
     )
 
 
@@ -381,31 +402,82 @@ def reissue_cert_for_renewal(
     validity_days: int = 365,
     ocsp_url: "str | None" = None,
     crl_url: "str | None"  = None,
+    hash_algorithm=None,
 ):
     """
-    Phát hành cert MỚI giữ nguyên subject + public_key của cert cũ.
+    KÝ LẠI một chứng chỉ đã có với thời hạn MỚI. Dùng cho:
+      • admin RENEW (A.8) — gia hạn cert tại chỗ, và
+      • RE-ISSUE hàng loạt khi đổi/active Root CA mới.
 
-    Dùng cho admin renew (A.8) — kéo dài thời hạn cho cùng 1 domain mà
-    KHÔNG đụng vào private key của customer (admin không có quyền truy cập
-    nó). Serial mới sinh ngẫu nhiên (khác cert cũ); chữ ký mới của Root CA
-    đang active.
+    GIỮ NGUYÊN: subject, public key, và TOÀN BỘ extensions của cert cũ
+    (BasicConstraints, KeyUsage, EKU, SAN, SubjectKeyIdentifier, CRLDP, AIA…).
+    Chỉ thay đổi:
+      • validity window mới (now-1p … now+validity_days),
+      • serial number MỚI — X.509 bắt buộc serial duy nhất mỗi issuer,
+      • AuthorityKeyIdentifier tính lại theo CA đang ký (phòng khi CA rotate),
+      • chữ ký mới của Root CA active.
+
+    KHÔNG đụng vào private key của customer (admin không có quyền). ocsp_url/
+    crl_url: nếu truyền (khác None) sẽ GHI ĐÈ CRLDP/AIA bằng URL mới; None →
+    giữ nguyên extension cũ.
 
     Trả về (cert, serial_number).
     """
-    if ocsp_url is None:
-        from services.infra_manager import prod_ocsp_url
-        ocsp_url = prod_ocsp_url()
-    if crl_url is None:
-        from services.infra_manager import prod_crl_url
-        crl_url = prod_crl_url()
-    return _build_end_entity_cert(
-        subject_name=old_cert.subject,
-        public_key=old_cert.public_key(),
-        san_value=_extract_san(old_cert),
-        ca_cert=ca_cert, ca_private_key=ca_private_key,
-        validity_days=validity_days,
-        ocsp_url=ocsp_url, crl_url=crl_url,
+    now = datetime.now(timezone.utc)
+    new_serial = x509.random_serial_number()
+
+    builder = (
+        x509.CertificateBuilder()
+        .subject_name(old_cert.subject)
+        .issuer_name(ca_cert.subject)
+        .public_key(old_cert.public_key())
+        .serial_number(new_serial)
+        .not_valid_before(now - timedelta(minutes=1))
+        .not_valid_after(now + timedelta(days=validity_days))
     )
+
+    # Copy lại từng extension của cert cũ, TRỪ AuthorityKeyIdentifier (tính lại
+    # theo CA active) và CRLDP/AIA nếu caller muốn ghi đè URL mới.
+    for ext in old_cert.extensions:
+        val = ext.value
+        if isinstance(val, x509.AuthorityKeyIdentifier):
+            continue
+        if ocsp_url is not None and isinstance(val, x509.AuthorityInformationAccess):
+            continue
+        if crl_url is not None and isinstance(val, x509.CRLDistributionPoints):
+            continue
+        builder = builder.add_extension(val, critical=ext.critical)
+
+    builder = builder.add_extension(
+        x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_cert.public_key()),
+        critical=False,
+    )
+    if ocsp_url is not None:
+        builder = builder.add_extension(
+            x509.AuthorityInformationAccess([
+                x509.AccessDescription(
+                    access_method=AuthorityInformationAccessOID.OCSP,
+                    access_location=x509.UniformResourceIdentifier(ocsp_url),
+                )
+            ]),
+            critical=False,
+        )
+    if crl_url is not None:
+        builder = builder.add_extension(
+            x509.CRLDistributionPoints([
+                x509.DistributionPoint(
+                    full_name=[x509.UniformResourceIdentifier(crl_url)],
+                    relative_name=None, reasons=None, crl_issuer=None,
+                )
+            ]),
+            critical=False,
+        )
+
+    cert = builder.sign(
+        private_key=ca_private_key,
+        algorithm=keyalg.signing_algorithm(ca_private_key, hash_algorithm),
+    )
+    return cert, new_serial
 
 
 def _build_san_list(names):

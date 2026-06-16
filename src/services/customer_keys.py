@@ -19,13 +19,10 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
 
+from core import keyalg
 from core.encryption import encrypt_blob, decrypt_blob
 from db.connection import conn_scope, transaction
-
-
-ALLOWED_KEY_SIZES = (2048, 3072, 4096)
 
 
 class CustomerKeyError(Exception):
@@ -56,11 +53,16 @@ def _serialize_public_pem(key) -> bytes:
 def generate_keypair(
     owner_id: int,
     name: str,
-    key_size: int,
+    key_spec,
     db_path: str,
 ) -> dict:
     """
-    Sinh RSA keypair + lưu vào DB.
+    Sinh keypair (RSA / ECDSA / Ed25519) + lưu vào DB.
+
+    `key_spec` chấp nhận:
+      • int (vd 2048)  → RSA với số bit đó (TƯƠNG THÍCH NGƯỢC với code/test cũ).
+      • spec string    → 'RSA-2048' | 'RSA-3072' | 'RSA-4096' | 'EC-P256'
+                          | 'EC-P384' | 'Ed25519'.
 
     Vì AAD phụ thuộc id (chưa biết trước INSERT), ta:
       1. INSERT row tạm với placeholder để có id
@@ -73,15 +75,16 @@ def generate_keypair(
         raise CustomerKeyError("Tên keypair không được rỗng.")
     if len(name) > 64:
         raise CustomerKeyError("Tên keypair dài quá 64 ký tự.")
-    if key_size not in ALLOWED_KEY_SIZES:
-        raise CustomerKeyError(
-            f"Key size không hợp lệ: {key_size}. "
-            f"Chọn 1 trong {ALLOWED_KEY_SIZES}."
-        )
 
-    rsa_key = rsa.generate_private_key(public_exponent=65537, key_size=key_size)
-    priv_pem = _serialize_private_pem(rsa_key)
-    pub_pem  = _serialize_public_pem(rsa_key)
+    try:
+        key = keyalg.generate_key(key_spec)
+    except keyalg.KeyAlgError as e:
+        raise CustomerKeyError(str(e)) from e
+
+    algorithm = keyalg.algorithm_label(key)   # 'RSA' / 'EC' / 'Ed25519'
+    key_size  = keyalg.key_size_for(key)      # RSA bit / EC curve bit / 0
+    priv_pem = _serialize_private_pem(key)
+    pub_pem  = _serialize_public_pem(key)
     now = datetime.now(timezone.utc).isoformat()
 
     with transaction(db_path) as conn:
@@ -101,7 +104,7 @@ def generate_keypair(
             "(owner_id, name, algorithm, key_size, public_key_pem, "
             " encrypted_private_key, gcm_nonce, created_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (owner_id, name, "RSA", key_size, pub_pem,
+            (owner_id, name, algorithm, key_size, pub_pem,
              b"", b"", now),
         )
         key_id = cur.lastrowid
@@ -117,7 +120,7 @@ def generate_keypair(
         "id":         key_id,
         "owner_id":   owner_id,
         "name":       name,
-        "algorithm":  "RSA",
+        "algorithm":  algorithm,
         "key_size":   key_size,
         "created_at": now,
     }

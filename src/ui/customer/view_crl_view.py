@@ -13,6 +13,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 from ui.theme import font
+from ui.common import fmt_local
 from services.crl_publish import (
     get_published_crl_info, list_crl_entries, DEFAULT_CRL_PATH,
 )
@@ -93,7 +94,7 @@ class ViewCRLFrame(ttk.Frame):
                     e["serial_hex"][:48] + ("…" if len(e["serial_hex"]) > 48 else ""),
                     e["common_name"] or "—",
                     e["owner_username"] or "—",
-                    e["revocation_date"][:19].replace("T", " "),
+                    fmt_local(e["revocation_date"]),
                 ),
             )
         self.count_label.config(
@@ -167,7 +168,10 @@ class ViewCRLFrame(ttk.Frame):
                     row, text=f"{label}:",
                     font=font("label"), width=14,
                 ).pack(side=tk.LEFT)
-                ttk.Label(row, text=str(info[key])).pack(side=tk.LEFT)
+                value = info[key]
+                if key in ("this_update", "next_update"):
+                    value = fmt_local(value)
+                ttk.Label(row, text=str(value)).pack(side=tk.LEFT)
             if self.remote_api_url:
                 row = ttk.Frame(self.header_box)
                 row.pack(anchor="w", pady=1)

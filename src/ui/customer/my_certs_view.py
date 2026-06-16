@@ -19,7 +19,7 @@ from services.remote_csr_client import (
     get_customer_cert_detail_from_admin_api,
     RemoteCSRClientError,
 )
-from ui.common import CertDetailDialog
+from ui.common import CertDetailDialog, fmt_local
 
 
 STATUS_COLORS = {
@@ -102,8 +102,8 @@ class MyCertsFrame(ttk.Frame):
         serial_str = c["serial_hex"][:32] + ("…" if len(c["serial_hex"]) > 32 else "")
         return (
             c["id"], c["common_name"], serial_str, c["status"],
-            c["not_valid_before"][:19].replace("T", " "),
-            c["not_valid_after"][:19].replace("T", " "),
+            fmt_local(c["not_valid_before"]),
+            fmt_local(c["not_valid_after"]),
         )
 
     def _build_actions(self) -> None:

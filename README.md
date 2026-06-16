@@ -6,15 +6,46 @@
 
 ## Tính năng chính
 
-- Admin đăng nhập, đổi mật khẩu, cấu hình hệ thống, tạo/rotate/publish Root CA.
-- Admin duyệt/từ chối CSR, phát hành certificate, revoke/renew certificate, duyệt yêu cầu thu hồi.
-- Admin publish CRL từ snapshot DB và đồng bộ OCSP DB.
-- Customer đăng ký, đăng nhập, đổi mật khẩu, tạo keypair RSA, tạo CSR, xem/tải certificate.
+- Admin đăng nhập, đổi mật khẩu, cấu hình hệ thống (thuật toán khóa + hàm băm mặc định), tạo/rotate/publish Root CA với **RSA / ECDSA / Ed25519**, xem + export public key của Root CA.
+- Admin duyệt/từ chối CSR, phát hành certificate, thu hồi, **gia hạn (renew tại chỗ — ký lại chính cert với thời hạn mới)**, **cấp lại toàn bộ cert dưới Root CA active**, duyệt yêu cầu thu hồi.
+- Admin publish CRL từ snapshot DB (mỗi entry giữ đúng thời điểm thu hồi thực) và đồng bộ OCSP DB.
+- Customer đăng ký, đăng nhập, đổi mật khẩu, tạo keypair **RSA / ECDSA / Ed25519**, tạo CSR, xem chi tiết/tải certificate.
 - Customer gửi yêu cầu thu hồi, tra cứu CRL, upload certificate ngoài và chạy verify 5 bước.
 - LAN CSR mode: máy Admin bật CSR API, máy Customer gửi CSR/cập nhật danh sách cert/yêu cầu thu hồi qua LAN; private key vẫn nằm ở máy Customer.
 - Prod CRL/OCSP server tự khởi động cùng app; Verification Lab dùng cặp Lab CRL/OCSP riêng.
-- Audit log cho các thao tác quan trọng.
+- Audit log đầy đủ cho **mọi hành vi thay đổi trạng thái** của user (tạo/sửa/xóa/ký/thu hồi/publish…).
+- Mọi mốc thời gian hiển thị theo **giờ local kèm nhãn múi giờ** (lưu trữ vẫn là UTC ISO-8601).
 - Private key được mã hoá AES-256-GCM; password hash bằng scrypt; service customer có BOLA/ownership guard.
+
+## Thuật toán khóa, hàm băm và vòng đời chứng chỉ
+
+### Thuật toán hỗ trợ
+- **RSA**: 2048 / 3072 / 4096 bit.
+- **ECDSA**: đường cong P-256 (secp256r1) / P-384 (secp384r1).
+- **Ed25519**: EdDSA (hàm băm SHA-512 cố định bên trong).
+
+Áp dụng cho keypair khách hàng, CSR và Root CA. Nguồn sự thật chung: `src/core/keyalg.py`.
+
+### Bộ chọn khóa cascading (dùng chung)
+Widget `src/ui/widgets/keyalg_selector.py` được **dùng chung** cho cả tab *Cấu hình hệ thống* và dialog *Sinh Root CA mới* nên hai nơi luôn đồng bộ:
+
+`Loại khóa → key size (RSA) / đường cong (ECDSA) / (Ed25519 không cần) → hàm băm phù hợp`
+
+Mặc định ở *Cấu hình hệ thống* (`default_key_algorithm` + `default_key_size`/`default_ec_curve` + `hash_algorithm`) sẽ tự prefill vào dialog Sinh Root CA.
+
+### Ràng buộc khóa ↔ hàm băm
+Hàm băm chữ ký lấy từ `system_config.hash_algorithm`. Ràng buộc theo loại khóa được áp dụng ở **cả UI lẫn backend** (`keyalg.signing_algorithm`):
+- **RSA** — dùng được mọi SHA-256/384/512.
+- **ECDSA** — hàm băm phải ≥ độ mạnh đường cong (NIST SP 800-57 / RFC 5480): P-256 → SHA-256/384/512; **P-384 → SHA-384/512** (loại SHA-256). Backend tự "ép lên" mức tối thiểu khi cấu hình toàn cục yếu hơn (vd Root CA EC-P384 ký cert con/CRL bằng `hash_algorithm=SHA-256` sẽ được ký bằng SHA-384).
+- **Ed25519** — hàm băm cố định, không chọn; ký với `algorithm=None`.
+
+### Vòng đời chứng chỉ
+- **Renew (gia hạn) = ký lại TẠI CHỖ**: cập nhật chính record trong `issued_certs` (giữ id, subject, public key, extensions), thời hạn mới, serial mới (X.509 yêu cầu serial duy nhất per issuer) — KHÔNG tạo thêm cert mới.
+- **Cấp lại toàn bộ (re-issue all)** khi đổi/active Root CA: ký lại mọi cert còn hiệu lực dưới Root CA active, thu hồi bản cũ với lý do `superseded` và publish CRL mới; idempotent (bỏ qua cert đã do CA active ký, cert đã revoke/hết hạn).
+- **CRL**: mỗi entry giữ đúng `revoked_at` thực của cert (đọc từ DB), không bị đặt lại theo thời điểm publish.
+
+### Xem chi tiết chứng chỉ
+Decode đầy đủ: version, serial (hex theo cặp byte), thuật toán chữ ký, issuer/subject DN tách thành phần, validity (giờ local), **public key value + fingerprint SHA-256/SHA-1**, và toàn bộ extension v3 (BasicConstraints, KeyUsage, EKU, SAN, SKI, AKI, CRLDP, AIA…).
 
 ## Công nghệ
 

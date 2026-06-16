@@ -16,8 +16,10 @@ import ipaddress
 
 from cryptography import x509
 from cryptography.x509.oid import NameOID
-from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives import serialization
 from cryptography.exceptions import InvalidSignature
+
+from core import keyalg
 
 
 def _build_san_list(names: "list[str]") -> "list[x509.GeneralName]":
@@ -40,6 +42,7 @@ def build_csr(
     san_list: "list[str] | None" = None,
     organization: str = "X509 Demo",
     country: str = "VN",
+    hash_algorithm=None,
 ) -> x509.CertificateSigningRequest:
     """
     Tạo CSR cho website, ký bởi `private_key` chủ nhân.
@@ -47,6 +50,9 @@ def build_csr(
     `common_name` là tên miền (vd "example.com"). Nếu `san_list` rỗng/None,
     tự thêm `common_name` vào SAN — chuẩn TLS hiện đại yêu cầu hostname
     phải nằm trong SAN, không chỉ CN.
+
+    Hỗ trợ private_key RSA / ECDSA / Ed25519 — thuật toán ký được suy ra theo
+    loại khóa (Ed25519 không dùng hàm băm ngoài).
     """
     if not common_name or not common_name.strip():
         raise ValueError("common_name không được rỗng")
@@ -70,7 +76,9 @@ def build_csr(
             critical=False,
         )
     )
-    return builder.sign(private_key, hashes.SHA256())
+    return builder.sign(
+        private_key, keyalg.signing_algorithm(private_key, hash_algorithm)
+    )
 
 
 def parse_csr(data: bytes) -> x509.CertificateSigningRequest:
@@ -90,29 +98,20 @@ def verify_csr_signature(csr: x509.CertificateSigningRequest) -> bool:
     Verify chữ ký CSR bằng public key trong chính CSR (proof of possession).
     Trả về True nếu OK.
     """
-    # cryptography >= 40 có CSR.is_signature_valid
+    # cryptography >= 40 có CSR.is_signature_valid (xử lý đúng mọi loại khóa).
     if hasattr(csr, "is_signature_valid"):
         return bool(csr.is_signature_valid)
-    # Fallback: verify thủ công
+    # Fallback: verify thủ công theo đúng loại khóa (RSA/ECDSA/Ed25519).
     try:
-        csr.public_key().verify(
-            csr.signature,
-            csr.tbs_certrequest_bytes,
-            *_verify_padding_args(csr),
+        keyalg.verify_with_public_key(
+            csr.public_key(), csr.signature,
+            csr.tbs_certrequest_bytes, csr.signature_hash_algorithm,
         )
         return True
     except InvalidSignature:
         return False
     except Exception:
         return False
-
-
-def _verify_padding_args(csr):
-    """RSA cần padding + hash; EC chỉ cần hash."""
-    from cryptography.hazmat.primitives.asymmetric import padding, rsa
-    if isinstance(csr.public_key(), rsa.RSAPublicKey):
-        return (padding.PKCS1v15(), csr.signature_hash_algorithm)
-    return (csr.signature_hash_algorithm,)
 
 
 def csr_to_pem(csr: x509.CertificateSigningRequest) -> bytes:

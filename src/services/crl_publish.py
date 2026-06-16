@@ -20,6 +20,7 @@ nếu có (chưa whitelist trong M4 — caller pass thẳng).
 """
 
 import os
+from datetime import datetime, timezone
 from typing import Optional
 
 from cryptography import x509
@@ -27,6 +28,7 @@ from cryptography import x509
 from core.crl import build_crl, save_crl, save_revoked_list
 from db.connection import conn_scope
 from services.ca_admin import load_active_root_ca_with_key, CAError
+from services.system_config import get_hash_algorithm
 from config import PROD_CRL_PATH, PROD_OCSP_DB_PATH
 
 
@@ -59,6 +61,30 @@ def snapshot_revoked_serials(db_path: str) -> "list[int]":
             out.append(int(r["serial_hex"], 16))
         except (ValueError, TypeError):
             # serial_hex lưu trong DB không hợp lệ — skip + warn
+            import sys
+            print(
+                f"[crl_publish] WARN: serial_hex không parse được: "
+                f"{r['serial_hex']!r}", file=sys.stderr,
+            )
+    return out
+
+
+def snapshot_revoked(db_path: str) -> "list[tuple[int, str]]":
+    """
+    Như snapshot_revoked_serials nhưng KÈM revoked_at (ISO) của từng cert, để
+    CRL ghi đúng NGÀY THU HỒI THỰC của mỗi serial (thay vì gán đồng loạt thời
+    điểm publish). Trả về list[(serial_int, revoked_at_iso)].
+    """
+    with conn_scope(db_path) as conn:
+        rows = conn.execute(
+            "SELECT serial_hex, revoked_at FROM issued_certs "
+            "WHERE revoked_at IS NOT NULL ORDER BY revoked_at ASC"
+        ).fetchall()
+    out: "list[tuple[int, str]]" = []
+    for r in rows:
+        try:
+            out.append((int(r["serial_hex"], 16), r["revoked_at"]))
+        except (ValueError, TypeError):
             import sys
             print(
                 f"[crl_publish] WARN: serial_hex không parse được: "
@@ -111,8 +137,22 @@ def publish_crl(
             f"Không publish được CRL: {e} Tạo Root CA trước."
         ) from e
 
-    serials = snapshot_revoked_serials(db_path)
-    crl = build_crl(ca_cert, ca_key, serials, validity_days=validity_days)
+    # Lấy serial KÈM ngày thu hồi thực để mỗi entry CRL giữ đúng mốc của nó.
+    pairs = snapshot_revoked(db_path)
+    serials = [s for s, _ in pairs]
+    revocation_dates: "dict[int, datetime]" = {}
+    for s, rdate in pairs:
+        try:
+            dt = datetime.fromisoformat(rdate)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            revocation_dates[s] = dt
+        except (ValueError, TypeError):
+            pass  # thiếu/format lạ → build_crl fallback dùng now cho serial đó
+
+    crl = build_crl(ca_cert, ca_key, serials, validity_days=validity_days,
+                    hash_algorithm=get_hash_algorithm(db_path),
+                    revocation_dates=revocation_dates)
 
     os.makedirs(os.path.dirname(crl_path) or ".", exist_ok=True)
     save_crl(crl, crl_path)

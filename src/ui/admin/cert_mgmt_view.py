@@ -21,7 +21,7 @@ from services.cert_lifecycle import (
     CertLifecycleError,
 )
 from services.system_config import get_int_config
-from ui.common import CertDetailDialog
+from ui.common import CertDetailDialog, fmt_local
 
 
 STATUS_COLORS = {
@@ -45,8 +45,8 @@ class CertMgmtFrame(ttk.Frame):
             self,
             text=(
                 "Danh sách tất cả cert đã phát hành. Có thể thu hồi (revoke "
-                "với reason) hoặc gia hạn (renew — phát hành cert mới cùng "
-                "subject + public key, validity mới)."
+                "với reason) hoặc gia hạn (renew — ký lại chính cert đó với "
+                "thời hạn validity mới; cùng record, serial mới)."
             ),
             foreground="#666", wraplength=720, justify=tk.LEFT,
         ).pack(anchor="w", pady=(0, 12))
@@ -92,7 +92,7 @@ class CertMgmtFrame(ttk.Frame):
             c["id"],
             c.get("owner_username") or f"uid={c['owner_id']}",
             c["common_name"], serial_str, c["status"],
-            c["not_valid_after"][:19].replace("T", " "),
+            fmt_local(c["not_valid_after"]),
             c["renewed_from_id"] or "—",
         )
 
@@ -236,10 +236,10 @@ class RenewCertDialog(tk.Toplevel):
         ttk.Label(
             frame,
             text=(
-                f"Phát hành cert mới cho:\n"
+                f"Gia hạn (ký lại) chứng chỉ:\n"
                 f"  {rec['common_name']}\n"
-                f"  serial cũ: {rec['serial_hex'][:24]}…\n"
-                f"  hết hạn cũ: {rec['not_valid_after'][:19].replace('T', ' ')}"
+                f"  serial hiện tại: {rec['serial_hex'][:24]}…\n"
+                f"  hết hạn hiện tại: {fmt_local(rec['not_valid_after'])}"
             ),
             justify=tk.LEFT, font=font("body"),
         ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 12))
@@ -254,8 +254,9 @@ class RenewCertDialog(tk.Toplevel):
         ttk.Label(
             frame,
             text=(
-                "Cert mới giữ nguyên public key của customer (không cần "
-                "submit CSR mới). Cert cũ KHÔNG tự revoke."
+                "Ký lại CHÍNH chứng chỉ này với thời hạn mới — giữ nguyên "
+                "subject + public key + extensions, cùng record (không tạo "
+                "cert mới). Serial đổi do X.509 yêu cầu serial duy nhất."
             ),
             foreground="#666", font=font("caption"), wraplength=400,
             justify=tk.LEFT,
@@ -285,16 +286,17 @@ class RenewCertDialog(tk.Toplevel):
             self.app.db_path, self.app.session["id"], Action.CERT_RENEWED,
             target_type="cert", target_id=str(new_cert["id"]),
             details={
-                "from_cert_id": self.rec["id"],
+                "cert_id": self.rec["id"],
                 "new_serial_hex": new_cert["serial_hex"],
                 "common_name": new_cert["common_name"],
                 "validity_days": validity,
             },
         )
         messagebox.showinfo(
-            "Đã renew",
-            f"Cert mới #{new_cert['id']} (serial {new_cert['serial_hex'][:16]}…) "
-            f"hết hạn {new_cert['not_valid_after'][:19].replace('T', ' ')}.",
+            "Đã gia hạn",
+            f"Đã ký lại cert #{new_cert['id']} — serial mới "
+            f"{new_cert['serial_hex'][:16]}…, hết hạn "
+            f"{fmt_local(new_cert['not_valid_after'])}.",
         )
         if self.on_done:
             self.on_done()

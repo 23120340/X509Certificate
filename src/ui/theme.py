@@ -1,28 +1,3 @@
-"""
-ui/theme.py
------------
-Design tokens + ttk style applier cho toàn ứng dụng.
-
-Triết lý:
-  • Light mode, navy + slate palette (đáng tin, dành cho phiên dài).
-  • Typography rút gọn còn 2 font: DFVN Float cho mọi title/heading
-    (display, h1, h2, h3, h4), Montserrat cho mọi body/label/caption/mono.
-  • 4/8 spacing rhythm.
-  • Status colors có cả tone đậm (text) lẫn tone nhạt (background).
-  • Hover/pressed/disabled states cho button qua `Style.map`.
-
-Tkinter giới hạn:
-  • Không có glassmorphism / backdrop-blur thật. Chúng ta thay thế bằng
-    layered surfaces (background → surface → surface_alt) + border tinh tế.
-  • Không có rounded corners trên Frame/Label. Có thể có chút trên ttk Button
-    tuỳ theme. Dùng `clam` theme làm baseline vì hỗ trợ custom colors tốt.
-
-Usage:
-  from ui.theme import apply_theme, COLOR, FONT, SPACE, font
-  apply_theme(root)
-  ttk.Label(parent, text="Hi", font=font("heading_xl"), foreground=COLOR["text"])
-"""
-
 import tkinter as tk
 from tkinter import font as tkfont
 from tkinter import ttk
