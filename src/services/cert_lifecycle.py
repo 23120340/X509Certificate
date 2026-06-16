@@ -199,20 +199,21 @@ def renew_cert(
     db_path: str,
     ocsp_url: "str | None" = None,
     crl_url:  "str | None" = None,
+    ocsp_db_path: "str | None" = DEFAULT_OCSP_DB_PATH,
 ) -> dict:
     """
-    GIA HẠN cert TẠI CHỖ (in-place): ký lại CHÍNH chứng chỉ đó với thời hạn
-    validity MỚI, GIỮ NGUYÊN record (cùng id), subject, public key và các
-    extensions. KHÔNG tạo thêm một cert mới.
+    GIA HẠN bằng cách phát hành cert KẾ NHIỆM:
 
-    Lưu ý X.509: serial number bắt buộc duy nhất, nên cert sau khi ký lại sẽ
-    có SERIAL MỚI và chữ ký mới của Root CA active — nhưng với hệ thống vẫn là
-    "cùng một chứng chỉ" (cùng id + cùng định danh + public key).
+      1. Ký lại (giữ subject + public key + extensions của cert cũ) thành cert
+         MỚI với thời hạn validity mới + serial mới + chữ ký Root CA active;
+         `renewed_from_id` trỏ về cert cũ → cột "Renew từ" hiển thị chain.
+      2. THU HỒI cert cũ với lý do 'superseded' + sync OCSP (tránh hai cert hợp
+         lệ song song cho cùng domain).
 
     Hàm băm chữ ký lấy theo system_config. ocsp_url/crl_url mặc định None →
     giữ nguyên CRLDP/AIA của cert cũ (chỉ ghi đè nếu caller truyền URL mới).
 
-    Raise CertLifecycleError nếu:
+    Trả về dict cert MỚI. Raise CertLifecycleError nếu:
       • cert_id không tồn tại
       • cert đã revoked (gia hạn cert đã thu hồi vô nghĩa)
       • chưa có Root CA active
@@ -254,16 +255,27 @@ def renew_cert(
     now = datetime.now(timezone.utc).isoformat()
     serial_hex = f"{new_serial:x}"
 
-    # Cập nhật TẠI CHỖ — cùng record, không INSERT row mới.
+    # INSERT cert kế nhiệm (renewed_from_id = cert cũ) + thu hồi cert cũ.
     with transaction(db_path) as conn:
+        cur = conn.execute(
+            "INSERT INTO issued_certs "
+            "(csr_request_id, owner_id, serial_hex, common_name, cert_pem, "
+            " not_valid_before, not_valid_after, issued_at, issued_by, "
+            " renewed_from_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (old["csr_request_id"], old["owner_id"], serial_hex,
+             old["common_name"], cert_pem, nb, na, now, admin_id, cert_id),
+        )
+        new_id = cur.lastrowid
         conn.execute(
-            "UPDATE issued_certs SET serial_hex = ?, cert_pem = ?, "
-            "not_valid_before = ?, not_valid_after = ?, issued_at = ?, "
-            "issued_by = ? WHERE id = ?",
-            (serial_hex, cert_pem, nb, na, now, admin_id, cert_id),
+            "UPDATE issued_certs SET revoked_at = ?, revocation_reason = ? "
+            "WHERE id = ? AND revoked_at IS NULL",
+            (now, "superseded — renewed", cert_id),
         )
 
-    return get_cert_detail(cert_id, db_path)
+    # Đồng bộ OCSP để cert cũ (đã superseded) hiển thị revoked ngay.
+    sync_ocsp_db(db_path, ocsp_db_path)
+    return get_cert_detail(new_id, db_path)
 
 
 # ── Re-issue toàn bộ dưới Root CA active (A.x — đổi/active CA) ────────────────
@@ -295,8 +307,9 @@ def reissue_all_under_active_ca(
     CA cũ nên client FAIL verify. Hàm này, với mỗi cert active (chưa revoked,
     chưa hết hạn) mà CHƯA do CA active ký:
       1. Ký lại bằng CA active — giữ subject + public key + extensions, GIỮ
-         nguyên hạn hết hạn ban đầu → INSERT cert mới (renewed_from_id = cũ).
-      2. Thu hồi cert cũ với lý do 'superseded'.
+         nguyên hạn hết hạn ban đầu → INSERT cert mới. KHÔNG set renewed_from_id
+         (đây là RE-ISSUE do đổi CA, KHÔNG phải renew — cột "Renew từ" để '—').
+      2. Thu hồi cert cũ với lý do 'superseded' (truy vết qua revocation_reason).
     Sau cùng: publish CRL mới (ký bởi CA active) + đồng bộ OCSP, để cert cũ
     hiển thị đã thu hồi.
 
@@ -359,14 +372,16 @@ def reissue_all_under_active_ca(
 
     with transaction(db_path) as conn:
         for (old_id, owner_id, csr_req, cn, cert_pem, nb, na, serial_hex) in to_write:
+            # KHÔNG set renewed_from_id: re-issue do đổi Root CA, không phải
+            # renew → "Renew từ" hiển thị '—'. Lineage truy vết qua việc cert
+            # cũ bị thu hồi với lý do 'superseded' (cập nhật ngay bên dưới).
             conn.execute(
                 "INSERT INTO issued_certs "
                 "(csr_request_id, owner_id, serial_hex, common_name, cert_pem, "
-                " not_valid_before, not_valid_after, issued_at, issued_by, "
-                " renewed_from_id) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " not_valid_before, not_valid_after, issued_at, issued_by) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (csr_req, owner_id, serial_hex, cn, cert_pem,
-                 nb, na, now_iso, admin_id, old_id),
+                 nb, na, now_iso, admin_id),
             )
             conn.execute(
                 "UPDATE issued_certs SET revoked_at = ?, revocation_reason = ? "
