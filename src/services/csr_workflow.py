@@ -120,6 +120,29 @@ def submit_csr(
     }
 
 
+def domains_for_key(
+    customer_key_id: int, requester_id: int, db_path: str,
+) -> "list[str]":
+    """
+    Distinct common_name của các CSR (pending/approved) đã dùng keypair này
+    bởi chính `requester_id`. Dùng để CẢNH BÁO khi một key sắp được dùng cho
+    domain thứ hai — reuse khóa làm phình blast-radius nếu private key bị lộ
+    (mọi domain chung key phải thu hồi cùng lúc, xem revoke_certs_by_key).
+
+    Chỉ tính CSR của owner (BOLA guard qua requester_id). KHÔNG tính CSR đã
+    rejected/cancelled (không sinh ra cert nên không làm tăng rủi ro).
+    """
+    with conn_scope(db_path) as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT common_name FROM csr_requests "
+            "WHERE customer_key_id = ? AND requester_id = ? "
+            "  AND status IN ('pending', 'approved') "
+            "ORDER BY common_name",
+            (customer_key_id, requester_id),
+        ).fetchall()
+    return [r["common_name"] for r in rows]
+
+
 def list_my_csr(
     requester_id: int,
     db_path: str,

@@ -18,7 +18,8 @@ from ui.widgets.modal import fit_to_content
 from core.csr import build_csr, csr_to_pem
 from services.customer_keys import list_keys, load_private_key, CustomerKeyError
 from services.csr_workflow import (
-    submit_csr, list_my_csr, get_my_csr_by_id, cancel_csr, CSRError,
+    submit_csr, list_my_csr, get_my_csr_by_id, cancel_csr,
+    domains_for_key, CSRError,
 )
 from services.audit import write_audit, Action
 from services.remote_csr_client import (
@@ -202,6 +203,11 @@ class CSRSubmitFrame(ttk.Frame):
             self._submit_remote(key_id, cn, san_list)
             return
 
+        # Cảnh báo reuse khóa: nếu keypair này đã dùng cho domain KHÁC, yêu cầu
+        # người dùng xác nhận trước khi tiếp tục (xem domains_for_key).
+        if not self._confirm_key_reuse(key_id, cn):
+            return
+
         try:
             csr = submit_csr(
                 requester_id=self.app.session["id"],
@@ -228,6 +234,35 @@ class CSRSubmitFrame(ttk.Frame):
             f"CSR #{csr['id']} cho '{cn}' đã gửi lên Admin để duyệt.",
         )
         self.refresh_csr_table()
+
+    def _confirm_key_reuse(self, key_id: int, cn: str) -> bool:
+        """
+        Nếu keypair `key_id` đã được dùng cho (các) domain KHÁC `cn`, hiện cảnh
+        báo và yêu cầu xác nhận. Trả về True nếu được phép tiếp tục, False nếu
+        người dùng hủy. Không có domain trùng → True ngay (không làm phiền).
+        """
+        try:
+            prior = domains_for_key(key_id, self.app.session["id"], self.app.db_path)
+        except Exception:
+            prior = []
+        others = [d for d in prior if d != cn]
+        if not others:
+            return True
+
+        listed = "\n".join(f"   • {d}" for d in others[:10])
+        more = (f"\n   …và {len(others) - 10} domain khác"
+                if len(others) > 10 else "")
+        return messagebox.askyesno(
+            "Khóa đã dùng cho domain khác",
+            (
+                "Keypair bạn chọn đã được dùng để xin chứng chỉ cho:\n"
+                f"{listed}{more}\n\n"
+                "Dùng CHUNG một private key cho nhiều domain nghĩa là: nếu key "
+                "này lộ, TẤT CẢ các domain trên đều phải thu hồi cùng lúc. "
+                "Khuyến nghị tạo keypair riêng cho mỗi domain.\n\n"
+                f"Vẫn tiếp tục tạo CSR cho '{cn}' bằng keypair này?"
+            ),
+        )
 
     def _submit_remote(self, key_id: int, cn: str, san_list: list[str]) -> None:
         key_meta = self._selected_key_meta()

@@ -33,11 +33,13 @@ from core.encryption import reset_master_key_cache
 from services.auth import register_user
 from services.ca_admin import create_root_ca, load_active_root_ca_with_key
 from services.customer_keys import generate_keypair
-from services.csr_workflow import submit_csr
+from services.csr_workflow import submit_csr, domains_for_key
 from services.csr_admin import approve_csr
 from services.cert_lifecycle import (
     list_all_certs, list_certs_for_owner, get_cert_detail,
-    revoke_cert, renew_cert, CertLifecycleError,
+    revoke_cert, renew_cert,
+    certs_sharing_public_key, revoke_certs_by_key,
+    CertLifecycleError,
 )
 
 
@@ -70,6 +72,15 @@ class TestEnv:
         csr = submit_csr(
             owner_id, kp["id"], common_name, san or [], self.db_path,
         )
+        issued = approve_csr(csr["id"], self.admin_id, 365, self.db_path)
+        return issued["id"]
+
+    def issue_cert_with_key(self, owner_id: int, key_id: int,
+                            common_name: str,
+                            san: "list[str] | None" = None) -> int:
+        """Helper: dùng LẠI keypair `key_id` → CSR + approve → cert_id.
+        Cho phép nhiều cert chia sẻ chung 1 public key (test revoke-by-key)."""
+        csr = submit_csr(owner_id, key_id, common_name, san or [], self.db_path)
         issued = approve_csr(csr["id"], self.admin_id, 365, self.db_path)
         return issued["id"]
 
@@ -307,6 +318,110 @@ def test_renew_then_renew_chain():
         env.cleanup()
 
 
+# ── Revoke-by-key (containment khi lộ private key) ─────────────────────────────
+
+def test_certs_sharing_public_key():
+    """certs_sharing_public_key gom đúng các cert chung 1 keypair, loại cert key khác."""
+    env = TestEnv()
+    try:
+        kp = generate_keypair(env.alice_id, "shared-key", 2048, env.db_path)
+        c1 = env.issue_cert_with_key(env.alice_id, kp["id"], "one.com")
+        c2 = env.issue_cert_with_key(env.alice_id, kp["id"], "two.com")
+        other = env.issue_cert(env.alice_id, "other.com")  # key KHÁC
+
+        ids = {s["id"] for s in certs_sharing_public_key(c1, env.db_path)}
+        assert ids == {c1, c2}, ids
+        assert other not in ids
+        # Đối xứng: từ c2 cũng ra cùng tập
+        assert {s["id"] for s in certs_sharing_public_key(c2, env.db_path)} == {c1, c2}
+        print("  [share-key] PASS ✓ — gom đúng cert chung public key, loại key khác")
+    finally:
+        env.cleanup()
+
+
+def test_revoke_by_key_cascade():
+    """revoke_certs_by_key thu hồi mọi cert chung khóa; cert key khác giữ nguyên; idempotent."""
+    env = TestEnv()
+    try:
+        ocsp = os.path.join(env.tmpdir, "ocsp.json")
+        kp = generate_keypair(env.alice_id, "leak-key", 2048, env.db_path)
+        c1 = env.issue_cert_with_key(env.alice_id, kp["id"], "a.com")
+        c2 = env.issue_cert_with_key(env.alice_id, kp["id"], "b.com")
+        safe = env.issue_cert(env.alice_id, "safe.com")  # key KHÁC
+
+        res = revoke_certs_by_key(c1, env.admin_id, "Private key leaked",
+                                  env.db_path, ocsp_db_path=ocsp)
+        assert res["revoked_count"] == 2, res
+        assert set(res["revoked_ids"]) == {c1, c2}, res
+
+        by_id = {c["id"]: c["status"] for c in list_all_certs(env.db_path)}
+        assert by_id[c1] == "revoked" and by_id[c2] == "revoked"
+        assert by_id[safe] == "active", "cert dùng key khác KHÔNG được đụng"
+        assert "leaked" in (
+            get_cert_detail(c2, env.db_path)["revocation_reason"] or ""
+        ).lower()
+
+        # Idempotent: gọi lại không revoke thêm
+        res2 = revoke_certs_by_key(c1, env.admin_id, "again",
+                                   env.db_path, ocsp_db_path=ocsp)
+        assert res2["revoked_count"] == 0, res2
+        assert set(res2["already_revoked_ids"]) == {c1, c2}, res2
+
+        # Reason rỗng → raise (validate trước khi đụng DB)
+        try:
+            revoke_certs_by_key(safe, env.admin_id, "  ",
+                                env.db_path, ocsp_db_path=ocsp)
+            assert False, "reason rỗng phải raise"
+        except CertLifecycleError:
+            pass
+        print("  [revoke-by-key] PASS ✓ — cascade theo khóa, chừa key khác, idempotent, reason required")
+    finally:
+        env.cleanup()
+
+
+def test_revoke_by_key_catches_renewed():
+    """Cert sau renew giữ nguyên key → revoke-by-key gom cả dòng renew, không double-revoke."""
+    env = TestEnv()
+    try:
+        ocsp = os.path.join(env.tmpdir, "ocsp.json")
+        kp = generate_keypair(env.alice_id, "renew-key", 2048, env.db_path)
+        c1 = env.issue_cert_with_key(env.alice_id, kp["id"], "renewme.com")
+        new_id = renew_cert(c1, env.admin_id, 365, env.db_path)["id"]  # c1→superseded
+
+        # new dùng chung key với c1 (renew giữ nguyên public key)
+        assert {s["id"] for s in certs_sharing_public_key(new_id, env.db_path)} == {c1, new_id}
+
+        res = revoke_certs_by_key(new_id, env.admin_id, "key leaked",
+                                  env.db_path, ocsp_db_path=ocsp)
+        assert new_id in res["revoked_ids"]
+        assert c1 in res["already_revoked_ids"]  # đã superseded từ trước
+        assert get_cert_detail(new_id, env.db_path)["status"] == "revoked"
+        print("  [revoke-by-key-renew] PASS ✓ — gom cả cert đã renew (cùng key), bỏ qua cert superseded")
+    finally:
+        env.cleanup()
+
+
+def test_domains_for_key_warning_data():
+    """domains_for_key trả domain (pending/approved) đã dùng keypair — dữ liệu cho cảnh báo reuse."""
+    env = TestEnv()
+    try:
+        kp = generate_keypair(env.alice_id, "multi-domain", 2048, env.db_path)
+        env.issue_cert_with_key(env.alice_id, kp["id"], "first.com")   # approved
+        submit_csr(env.alice_id, kp["id"], "second.com", [], env.db_path)  # pending
+
+        assert set(domains_for_key(kp["id"], env.alice_id, env.db_path)) == {
+            "first.com", "second.com",
+        }
+        # BOLA: Bob hỏi key của Alice → rỗng
+        assert domains_for_key(kp["id"], env.bob_id, env.db_path) == []
+        # Key chưa dùng → rỗng
+        kp2 = generate_keypair(env.alice_id, "fresh", 2048, env.db_path)
+        assert domains_for_key(kp2["id"], env.alice_id, env.db_path) == []
+        print("  [domains-for-key] PASS ✓ — liệt kê domain pending/approved của key; BOLA-safe")
+    finally:
+        env.cleanup()
+
+
 # ── Runner ────────────────────────────────────────────────────────────────────
 
 TESTS = [
@@ -318,6 +433,10 @@ TESTS = [
     test_renew_without_root_ca,
     test_get_cert_detail_ownership,
     test_renew_then_renew_chain,
+    test_certs_sharing_public_key,
+    test_revoke_by_key_cascade,
+    test_revoke_by_key_catches_renewed,
+    test_domains_for_key_warning_data,
 ]
 
 

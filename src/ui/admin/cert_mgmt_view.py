@@ -14,10 +14,11 @@ from tkinter import ttk, messagebox
 
 from ui.theme import font
 from ui.widgets.status_table import StatusFilterTreeFrame
-from ui.widgets.modal import init_modal, make_button_row
+from ui.widgets.modal import init_modal, make_button_row, fit_to_content
 from services.audit import write_audit, Action
 from services.cert_lifecycle import (
     list_all_certs, get_cert_detail, revoke_cert, renew_cert,
+    certs_sharing_public_key, revoke_certs_by_key,
     CertLifecycleError,
 )
 from services.system_config import get_int_config
@@ -167,7 +168,7 @@ class RevokeCertDialog(tk.Toplevel):
 
         frame = init_modal(self, parent=parent,
                            title=f"Revoke cert #{rec['id']}",
-                           geometry="440x300")
+                           geometry="520x520")
 
         ttk.Label(
             frame,
@@ -178,30 +179,83 @@ class RevokeCertDialog(tk.Toplevel):
         ttk.Label(
             frame, text="Lý do thu hồi (bắt buộc):",
         ).pack(anchor="w", pady=(8, 4))
-        self.reason_text = tk.Text(frame, height=6, width=44, wrap=tk.WORD)
+        self.reason_text = tk.Text(frame, height=5, width=44, wrap=tk.WORD)
         self.reason_text.pack(fill=tk.BOTH, expand=True)
+
+        # ── Revoke-by-key: gom các cert anh em dùng chung public key ──────────
+        try:
+            siblings = certs_sharing_public_key(
+                rec["id"], app.db_path, only_unrevoked=True,
+            )
+        except CertLifecycleError:
+            siblings = []
+        self._others = [s for s in siblings if s["id"] != rec["id"]]
+
+        ttk.Separator(frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=(10, 6))
+
+        self.by_key_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            frame,
+            text="Thu hồi TẤT CẢ cert dùng chung khóa này (nghi ngờ lộ private key)",
+            variable=self.by_key_var,
+        ).pack(anchor="w")
+
+        if self._others:
+            names = "\n".join(
+                f"   • #{s['id']} {s['common_name']} ({s['serial_hex'][:12]}…)"
+                for s in self._others[:8]
+            )
+            more = (f"\n   …và {len(self._others) - 8} cert khác"
+                    if len(self._others) > 8 else "")
+            ttk.Label(
+                frame,
+                text=(
+                    f"⚠ Khóa này còn đứng sau {len(self._others)} cert hiệu lực khác:\n"
+                    f"{names}{more}\n"
+                    "Nếu key bị lộ, chỉ revoke cert hiện tại KHÔNG đủ — bật tùy "
+                    "chọn trên để thu hồi đồng loạt."
+                ),
+                foreground="#c0392b", font=font("caption"),
+                wraplength=460, justify=tk.LEFT,
+            ).pack(anchor="w", pady=(4, 0))
+        else:
+            ttk.Label(
+                frame,
+                text="Không có cert nào khác dùng chung khóa với cert này.",
+                foreground="#888", font=font("caption"),
+                wraplength=460, justify=tk.LEFT,
+            ).pack(anchor="w", pady=(4, 0))
 
         ttk.Label(
             frame,
-            text="CRL/OCSP DB sẽ snapshot trạng thái này khi admin Publish CRL ở M8.",
+            text="CRL/OCSP DB sẽ snapshot trạng thái này; nhớ Publish CRL ở mục CRL.",
             foreground="#888", font=font("caption"),
         ).pack(anchor="w", pady=(6, 0))
 
         make_button_row(frame, submit_label="Revoke",
                         submit_command=self.on_submit)
+        fit_to_content(self)
         self.reason_text.focus_set()
 
     def on_submit(self) -> None:
         reason = self.reason_text.get("1.0", tk.END).strip()
+        if not reason:
+            messagebox.showerror("Thiếu lý do", "Lý do thu hồi không được rỗng.")
+            return
+        if self.by_key_var.get():
+            self._submit_by_key(reason)
+        else:
+            self._submit_single(reason)
+
+    def _submit_single(self, reason: str) -> None:
         try:
-            revoked = revoke_cert(
+            revoke_cert(
                 self.rec["id"], self.app.session["id"], reason,
                 self.app.db_path,
             )
         except CertLifecycleError as e:
             messagebox.showerror("Revoke thất bại", str(e))
             return
-
         write_audit(
             self.app.db_path, self.app.session["id"], Action.CERT_REVOKED,
             target_type="cert", target_id=str(self.rec["id"]),
@@ -213,6 +267,58 @@ class RevokeCertDialog(tk.Toplevel):
         )
         messagebox.showinfo("Đã revoke",
                             f"Cert #{self.rec['id']} đã thu hồi.")
+        self._finish()
+
+    def _submit_by_key(self, reason: str) -> None:
+        # Lấy lại danh sách cert chung khóa NGAY trước khi xác nhận, để số đếm
+        # trong prompt khớp đúng trạng thái DB hiện tại (self._others chỉ là
+        # snapshot lúc mở dialog — có thể đã cũ).
+        try:
+            fresh = certs_sharing_public_key(
+                self.rec["id"], self.app.db_path, only_unrevoked=True,
+            )
+        except CertLifecycleError as e:
+            messagebox.showerror("Revoke theo khóa thất bại", str(e))
+            return
+        n_others = len([s for s in fresh if s["id"] != self.rec["id"]])
+        if not messagebox.askyesno(
+            "Xác nhận thu hồi theo khóa",
+            f"Sẽ thu hồi tổng {n_others + 1} cert dùng chung khóa này "
+            f"(cert hiện tại + {n_others} cert khác). "
+            "Hành động không thể hoàn tác. Tiếp tục?",
+        ):
+            return
+        try:
+            result = revoke_certs_by_key(
+                self.rec["id"], self.app.session["id"], reason,
+                self.app.db_path,
+            )
+        except CertLifecycleError as e:
+            messagebox.showerror("Revoke theo khóa thất bại", str(e))
+            return
+        write_audit(
+            self.app.db_path, self.app.session["id"], Action.CERT_REVOKED,
+            target_type="cert", target_id=str(self.rec["id"]),
+            details={
+                "mode": "by_key",
+                "key_fingerprint": result["key_fingerprint"],
+                "anchor_serial_hex": self.rec["serial_hex"],
+                "anchor_common_name": self.rec["common_name"],
+                "revoked_ids": result["revoked_ids"],
+                "revoked_count": result["revoked_count"],
+                "already_revoked_ids": result["already_revoked_ids"],
+                "reason": reason,
+            },
+        )
+        messagebox.showinfo(
+            "Đã thu hồi theo khóa",
+            f"Đã thu hồi {result['revoked_count']} cert dùng chung khóa "
+            f"(fingerprint {result['key_fingerprint'][:16]}…).\n"
+            f"Cert IDs: {', '.join(map(str, result['revoked_ids'])) or '—'}",
+        )
+        self._finish()
+
+    def _finish(self) -> None:
         if self.on_done:
             self.on_done()
         self.destroy()

@@ -20,6 +20,7 @@ Cert status được suy ra động (không lưu trong DB):
   active    → ngược lại
 """
 
+import hashlib
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -188,6 +189,152 @@ def revoke_cert(
     sync_ocsp_db(db_path, ocsp_db_path)
     detail = get_cert_detail(cert_id, db_path)
     return detail
+
+
+# ── Revoke-by-key (containment khi nghi ngờ lộ private key) ───────────────────
+#
+# Revocation chuẩn là THEO SERIAL: revoke_cert chỉ thu hồi đúng 1 cert. Nhưng một
+# private key có thể đứng sau NHIỀU cert — khách hàng dùng lại key cho nhiều domain,
+# hoặc cert đã renew/re-issue (giữ nguyên public key). Khi key bị lộ, thu hồi 1 serial
+# KHÔNG vô hiệu hóa các cert anh em → key vẫn còn đường sống. Nhóm hàm dưới gom mọi
+# cert chia sẻ public key rồi thu hồi đồng loạt.
+#
+# Định danh khóa = SHA-256(SubjectPublicKeyInfo DER) trích trực tiếp từ cert_pem.
+# Ổn định tuyệt đối: cùng keypair → cùng fingerprint, bất kể subject/serial/extension;
+# bắt được cả cert renew/re-issue lẫn cert không gắn CSR nào (vd cert external/đổi CA).
+
+def _spki_fingerprint(cert) -> str:
+    """SHA-256 (hex) của SubjectPublicKeyInfo (DER) — định danh ổn định của public key."""
+    spki = cert.public_key().public_bytes(
+        serialization.Encoding.DER,
+        serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    return hashlib.sha256(spki).hexdigest()
+
+
+def _fingerprint_of_pem(cert_pem) -> "str | None":
+    """Fingerprint khóa từ cert PEM (bytes/str). None nếu PEM hỏng (skip phòng thủ)."""
+    try:
+        cert = x509.load_pem_x509_certificate(bytes(cert_pem))
+    except Exception:
+        return None
+    return _spki_fingerprint(cert)
+
+
+def _anchor_fingerprint(cert_id: int, db_path: str) -> "tuple[dict, str]":
+    """(anchor_detail, key_fingerprint). Raise CertLifecycleError nếu cert không
+    tồn tại hoặc PEM hỏng — fingerprint được tính MỘT lần, không bao giờ None."""
+    anchor = get_cert_detail(cert_id, db_path)
+    if anchor is None:
+        raise CertLifecycleError("Không tìm thấy cert.")
+    fp = _fingerprint_of_pem(anchor["cert_pem"])
+    if fp is None:
+        raise CertLifecycleError(
+            "Cert này có PEM không hợp lệ, không trích được public key."
+        )
+    return anchor, fp
+
+
+def _scan_certs_with_fingerprint(
+    target_fp: str, db_path: str, only_unrevoked: bool,
+) -> "list[dict]":
+    """Quét issued_certs, trả các row có cùng key-fingerprint (status computed,
+    bỏ cert_pem). Dùng chung cho certs_sharing_public_key + revoke_certs_by_key
+    nên cả hai luôn nhìn CÙNG một tập khóa."""
+    now = datetime.now(timezone.utc)
+    out: "list[dict]" = []
+    with conn_scope(db_path) as conn:
+        rows = conn.execute(
+            "SELECT c.id, c.owner_id, u.username AS owner_username, "
+            "       c.serial_hex, c.common_name, c.cert_pem, "
+            "       c.not_valid_after, c.revoked_at, c.revocation_reason "
+            "FROM issued_certs c LEFT JOIN users u ON u.id = c.owner_id "
+            "ORDER BY c.id DESC"
+        ).fetchall()
+    for r in rows:
+        if _fingerprint_of_pem(r["cert_pem"]) != target_fp:
+            continue
+        status = _compute_status(r, now)
+        if only_unrevoked and status == "revoked":
+            continue
+        d = dict(r)
+        d.pop("cert_pem", None)
+        d["status"] = status
+        out.append(d)
+    return out
+
+
+def certs_sharing_public_key(
+    cert_id: int, db_path: str, only_unrevoked: bool = False,
+) -> "list[dict]":
+    """
+    Danh sách cert dùng CHUNG public key với `cert_id` (GỒM cả chính nó),
+    newest-first. Mỗi phần tử có `status` computed, KHÔNG kèm cert_pem.
+
+    only_unrevoked=True → bỏ cert đã thu hồi (dùng để xem trước khi cascade).
+    Lưu ý: cert đã hết hạn (status 'expired') vẫn được tính — chúng chưa thu
+    hồi nên revoke-by-key vẫn nên gom để đánh dấu thu hồi rõ ràng khi lộ khóa.
+
+    Raise CertLifecycleError nếu cert_id không tồn tại / PEM hỏng.
+    """
+    _anchor, target_fp = _anchor_fingerprint(cert_id, db_path)
+    return _scan_certs_with_fingerprint(target_fp, db_path, only_unrevoked)
+
+
+def revoke_certs_by_key(
+    cert_id: int,
+    admin_id: int,
+    reason: str,
+    db_path: str,
+    ocsp_db_path: "str | None" = DEFAULT_OCSP_DB_PATH,
+) -> dict:
+    """
+    Thu hồi TẤT CẢ cert chưa-thu-hồi dùng CHUNG public key với `cert_id`
+    (containment khi nghi ngờ lộ khóa). Idempotent: cert đã revoked được bỏ qua.
+
+    Atomic: mọi UPDATE nằm trong 1 transaction, sau đó sync OCSP 1 lần.
+
+    Trả về dict {anchor_id, key_fingerprint, matched, revoked_ids,
+                 already_revoked_ids, revoked_count}.
+    Raise CertLifecycleError nếu reason rỗng/quá dài hoặc cert_id không hợp lệ.
+    """
+    reason = (reason or "").strip()
+    if not reason:
+        raise CertLifecycleError("Lý do thu hồi không được rỗng.")
+    if len(reason) > MAX_REVOKE_REASON_LEN:
+        raise CertLifecycleError(f"Lý do dài quá {MAX_REVOKE_REASON_LEN} ký tự.")
+
+    # Fingerprint tính 1 lần (đã None-checked) và dùng cho cả scan lẫn audit →
+    # không còn double-read, key_fingerprint trả về luôn hợp lệ.
+    _anchor, key_fp = _anchor_fingerprint(cert_id, db_path)
+    siblings = _scan_certs_with_fingerprint(key_fp, db_path, only_unrevoked=False)
+
+    pending = [s for s in siblings if s["status"] != "revoked"]
+    already = [s["id"] for s in siblings if s["status"] == "revoked"]
+
+    now = datetime.now(timezone.utc).isoformat()
+    revoked_ids: "list[int]" = []
+    if pending:
+        with transaction(db_path) as conn:
+            for s in pending:
+                cur = conn.execute(
+                    "UPDATE issued_certs SET revoked_at = ?, revocation_reason = ? "
+                    "WHERE id = ? AND revoked_at IS NULL",
+                    (now, reason, s["id"]),
+                )
+                if cur.rowcount > 0:
+                    revoked_ids.append(s["id"])
+        # Đồng bộ OCSP 1 lần sau cả batch (giống reissue_all_under_active_ca).
+        sync_ocsp_db(db_path, ocsp_db_path)
+
+    return {
+        "anchor_id":           cert_id,
+        "key_fingerprint":     key_fp,
+        "matched":             len(siblings),
+        "revoked_ids":         revoked_ids,
+        "already_revoked_ids": already,
+        "revoked_count":       len(revoked_ids),
+    }
 
 
 # ── Renew ────────────────────────────────────────────────────────────────────
