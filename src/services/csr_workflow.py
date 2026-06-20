@@ -86,6 +86,11 @@ def submit_csr(
         raise CSRError(
             f"Keypair id={customer_key_id} không thuộc về bạn (hoặc không tồn tại)."
         )
+    if meta.get("compromised_at"):
+        raise CSRError(
+            "Keypair này đã bị đánh dấu LỘ KHÓA — không thể dùng để xin chứng "
+            "chỉ nữa. Hãy sinh keypair mới."
+        )
 
     # Decrypt key + tạo CSR
     try:

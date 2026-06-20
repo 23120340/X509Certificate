@@ -18,6 +18,7 @@ from services.revocation_workflow import (
     list_all_revocations, get_revocation_detail,
     approve_revocation, reject_revocation, RevocationWorkflowError,
 )
+from services.cert_lifecycle import certs_sharing_public_key, CertLifecycleError
 from services.crl_publish import DEFAULT_CRL_PATH, DEFAULT_OCSP_DB_PATH
 
 
@@ -71,16 +72,16 @@ class RevokeQueueFrame(ttk.Frame):
 
     def _build_tree(self) -> None:
         cols = ("id", "cert_id", "requester", "common_name",
-                "reason", "status", "submitted_at")
+                "key_compromise", "reason", "status", "submitted_at")
         self.tree = ttk.Treeview(self, columns=cols, show="headings", height=14)
         labels = {
             "id": "ID", "cert_id": "CertID", "requester": "Requester",
-            "common_name": "Domain", "reason": "Reason",
-            "status": "Status", "submitted_at": "Gửi lúc",
+            "common_name": "Domain", "key_compromise": "Lộ khóa",
+            "reason": "Reason", "status": "Status", "submitted_at": "Gửi lúc",
         }
         widths = {"id": 50, "cert_id": 60, "requester": 100,
-                  "common_name": 150, "reason": 220, "status": 80,
-                  "submitted_at": 140}
+                  "common_name": 150, "key_compromise": 70, "reason": 200,
+                  "status": 80, "submitted_at": 140}
         for c in cols:
             self.tree.heading(c, text=labels[c])
             self.tree.column(c, width=widths[c], anchor="w")
@@ -119,6 +120,7 @@ class RevokeQueueFrame(ttk.Frame):
                     r["id"], r["issued_cert_id"],
                     r.get("requester_username") or f"uid={r['requester_id']}",
                     r.get("common_name") or "—",
+                    "⚠ Có" if r.get("key_compromise") else "—",
                     (r["reason"] or "")[:60],
                     r["status"],
                     fmt_local(r["submitted_at"]),
@@ -148,6 +150,7 @@ class RevokeQueueFrame(ttk.Frame):
             f"(serial {rec.get('serial_hex', '?')[:24]}…)\n"
             f"Domain:         {rec.get('common_name') or '—'}\n"
             f"Requester:      {rec.get('requester_username') or rec['requester_id']}\n"
+            f"Lộ khóa:        {'CÓ — sẽ thu hồi mọi cert dùng chung khóa' if rec.get('key_compromise') else 'Không'}\n"
             f"Submitted at:   {fmt_local(rec['submitted_at'])}\n"
             f"Status:         {rec['status']}\n"
             + (f"Reviewed at:    {fmt_local(rec['reviewed_at'])}\n" if rec.get('reviewed_at') else "")
@@ -170,12 +173,30 @@ class RevokeQueueFrame(ttk.Frame):
                 f"Request đang ở status '{rec['status']}'.",
             )
             return
-        if not messagebox.askyesno(
-            "Xác nhận",
-            f"Approve request #{req_id}?\n"
-            f"Cert #{rec['issued_cert_id']} ({rec.get('common_name') or '?'}) "
-            f"sẽ bị đánh dấu REVOKED.",
-        ):
+        # Nếu request đánh dấu lộ khóa → cảnh báo cascade + cho biết số cert ảnh hưởng.
+        if rec.get("key_compromise"):
+            try:
+                affected = certs_sharing_public_key(
+                    rec["issued_cert_id"], self.app.db_path,
+                    only_unrevoked=True, owner_id=rec.get("requester_id"),
+                )
+                n_affected = len(affected)
+            except CertLifecycleError:
+                n_affected = 1
+            confirm_msg = (
+                f"⚠ Request #{req_id} đánh dấu LỘ KHÓA.\n"
+                f"Approve sẽ thu hồi TẤT CẢ {n_affected} cert (chưa thu hồi) của "
+                f"chủ sở hữu dùng chung khóa với cert #{rec['issued_cert_id']} "
+                f"({rec.get('common_name') or '?'}), không chỉ riêng cert này.\n\n"
+                "Hành động không thể hoàn tác. Tiếp tục?"
+            )
+        else:
+            confirm_msg = (
+                f"Approve request #{req_id}?\n"
+                f"Cert #{rec['issued_cert_id']} ({rec.get('common_name') or '?'}) "
+                f"sẽ bị đánh dấu REVOKED."
+            )
+        if not messagebox.askyesno("Xác nhận", confirm_msg):
             return
         try:
             result = approve_revocation(
@@ -190,9 +211,14 @@ class RevokeQueueFrame(ttk.Frame):
         write_audit(
             self.app.db_path, self.app.session["id"], Action.REVOKE_APPROVED,
             target_type="revocation_request", target_id=str(req_id),
-            details={"cert_id": rec["issued_cert_id"]},
+            details={
+                "cert_id": rec["issued_cert_id"],
+                "key_compromise": bool(result.get("key_compromise")),
+                "revoked_ids": result.get("revoked_ids"),
+                "revoked_count": result.get("revoked_count"),
+            },
         )
-        if result["cert_was_revoked"]:
+        if result.get("revoked_count"):
             write_audit(
                 self.app.db_path, self.app.session["id"], Action.CERT_REVOKED,
                 target_type="cert", target_id=str(rec["issued_cert_id"]),
@@ -200,6 +226,21 @@ class RevokeQueueFrame(ttk.Frame):
                     "via": "revocation_request",
                     "request_id": req_id,
                     "reason": rec["reason"],
+                    "mode": "by_key" if result.get("key_compromise") else "single",
+                    "revoked_ids": result.get("revoked_ids"),
+                    "revoked_count": result.get("revoked_count"),
+                },
+            )
+        compromised = result.get("compromised_key_ids") or []
+        if compromised:
+            write_audit(
+                self.app.db_path, self.app.session["id"], Action.KEY_COMPROMISED,
+                target_type="customer_key",
+                target_id=",".join(map(str, compromised)),
+                details={
+                    "compromised_key_ids": compromised,
+                    "via": "revocation_request",
+                    "request_id": req_id,
                 },
             )
         crl_result = result.get("crl_result")
@@ -219,10 +260,20 @@ class RevokeQueueFrame(ttk.Frame):
                 f"Request #{req_id} đã approve, nhưng chưa cập nhật được CRL:\n{crl_error}",
             )
 
+        if result.get("key_compromise"):
+            cert_line = (
+                f"Đã thu hồi {result.get('revoked_count', 0)} cert dùng chung khóa "
+                f"(lộ khóa)."
+                + (f" Đã hủy private key của {len(compromised)} keypair."
+                   if compromised else "")
+            )
+        elif result["cert_was_revoked"]:
+            cert_line = "Cert đã revoke."
+        else:
+            cert_line = "Cert đã được revoke trước đó."
         messagebox.showinfo(
             "Đã approve",
-            f"Request #{req_id} đã approve. "
-            f"Cert {'đã revoke' if result['cert_was_revoked'] else 'đã được revoke trước đó'}.\n"
+            f"Request #{req_id} đã approve. {cert_line}\n"
             + (
                 f"CRL đã tự cập nhật ({crl_result['revoked_count']} serial)."
                 if crl_result else

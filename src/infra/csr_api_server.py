@@ -159,6 +159,7 @@ def start_csr_api_server(
                         password=payload.get("password", ""),
                         cert_id=int(payload.get("cert_id", 0)),
                         reason=payload.get("reason", ""),
+                        key_compromise=bool(payload.get("key_compromise", False)),
                         db_path=db_path,
                     )
                     self._send_json(201, {"ok": True, "revocation_request": rec})

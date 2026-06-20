@@ -53,6 +53,9 @@ CREATE TABLE IF NOT EXISTS customer_keys (
     encrypted_private_key    BLOB    NOT NULL,
     gcm_nonce                BLOB    NOT NULL,
     created_at               TEXT    NOT NULL,
+    -- Nếu != NULL: private key bị nghi LỘ → đã wipe encrypted_private_key,
+    -- chặn dùng cho CSR mới (xem services/customer_keys.compromise_keys_for_fingerprint).
+    compromised_at           TEXT,
     UNIQUE(owner_id, name)
 );
 
@@ -97,6 +100,10 @@ CREATE TABLE IF NOT EXISTS revocation_requests (
     issued_cert_id           INTEGER NOT NULL REFERENCES issued_certs(id) ON DELETE CASCADE,
     requester_id             INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     reason                   TEXT,
+    -- Cờ "nghi ngờ lộ private key": khi admin approve, thu hồi TẤT CẢ cert dùng
+    -- chung khóa (cascade revoke-by-key) thay vì chỉ 1 cert. Xem
+    -- services/revocation_workflow.approve_revocation.
+    key_compromise           INTEGER NOT NULL DEFAULT 0 CHECK(key_compromise IN (0,1)),
     status                   TEXT    NOT NULL DEFAULT 'pending'
                                      CHECK(status IN ('pending', 'approved', 'rejected')),
     submitted_at             TEXT    NOT NULL,

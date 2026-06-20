@@ -32,8 +32,8 @@ from core import encryption
 from core.encryption import reset_master_key_cache
 from services.auth import register_user
 from services.ca_admin import create_root_ca, load_active_root_ca_with_key
-from services.customer_keys import generate_keypair
-from services.csr_workflow import submit_csr, domains_for_key
+from services.customer_keys import generate_keypair, get_key_meta
+from services.csr_workflow import submit_csr, domains_for_key, CSRError
 from services.csr_admin import approve_csr
 from services.cert_lifecycle import (
     list_all_certs, list_certs_for_owner, get_cert_detail,
@@ -422,6 +422,38 @@ def test_domains_for_key_warning_data():
         env.cleanup()
 
 
+def test_revoke_by_key_marks_and_wipes_keypair():
+    """revoke-by-key (Admin) đánh dấu key lộ + WIPE private key → key thành
+    public-only; submit_csr bằng key đó bị chặn."""
+    env = TestEnv()
+    try:
+        ocsp = os.path.join(env.tmpdir, "ocsp.json")
+        kp = generate_keypair(env.alice_id, "leak-kp", 2048, env.db_path)
+        c1 = env.issue_cert_with_key(env.alice_id, kp["id"], "lk-a.com")
+
+        before = get_key_meta(kp["id"], env.alice_id, env.db_path)
+        assert before["compromised_at"] is None and before["is_public_only"] == 0
+
+        res = revoke_certs_by_key(
+            c1, env.admin_id, "key leaked", env.db_path, ocsp_db_path=ocsp,
+        )
+        assert kp["id"] in res["compromised_key_ids"], res
+
+        after = get_key_meta(kp["id"], env.alice_id, env.db_path)
+        assert after["compromised_at"] is not None
+        assert after["is_public_only"] == 1, "private key phải bị wipe"
+
+        # submit_csr bằng key đã lộ → chặn
+        try:
+            submit_csr(env.alice_id, kp["id"], "new-domain.com", [], env.db_path)
+            assert False, "submit_csr bằng key lộ phải raise"
+        except CSRError as e:
+            assert "lộ" in str(e).lower()
+        print("  [revoke-by-key-marks-key] PASS ✓ — key lộ bị đánh dấu + wipe + chặn CSR mới")
+    finally:
+        env.cleanup()
+
+
 # ── Runner ────────────────────────────────────────────────────────────────────
 
 TESTS = [
@@ -436,6 +468,7 @@ TESTS = [
     test_certs_sharing_public_key,
     test_revoke_by_key_cascade,
     test_revoke_by_key_catches_renewed,
+    test_revoke_by_key_marks_and_wipes_keypair,
     test_domains_for_key_warning_data,
 ]
 

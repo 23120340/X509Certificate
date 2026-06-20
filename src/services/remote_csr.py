@@ -15,6 +15,7 @@ from cryptography import x509
 from cryptography.hazmat.primitives import serialization
 from cryptography.x509.oid import NameOID
 
+from core import keyalg
 from core.csr import parse_csr, verify_csr_signature
 from db.connection import conn_scope, transaction
 from services.audit import write_audit, Action
@@ -145,7 +146,10 @@ def submit_remote_csr(
         serialization.Encoding.PEM,
         serialization.PublicFormat.SubjectPublicKeyInfo,
     )
-    key_size = getattr(public_key, "key_size", 2048)
+    # Nhận đúng loại khóa từ CSR (RSA/EC/Ed25519) thay vì hardcode RSA-2048,
+    # tránh sai metadata khi client gửi CSR khóa EC/Ed25519 qua LAN.
+    algorithm = keyalg.algorithm_label(public_key)
+    key_size = keyalg.key_size_for(public_key)
 
     user = _login_or_register_customer(username, password, db_path)
     final_key_name = _unique_key_name(user["id"], key_name, db_path)
@@ -159,7 +163,7 @@ def submit_remote_csr(
             " encrypted_private_key, gcm_nonce, created_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (
-                user["id"], final_key_name, "RSA", key_size,
+                user["id"], final_key_name, algorithm, key_size,
                 public_key_pem, b"", b"", now,
             ),
         )
@@ -253,16 +257,24 @@ def submit_remote_revocation_request(
     cert_id: int,
     reason: str,
     db_path: str,
+    key_compromise: bool = False,
 ) -> dict:
     user = _login_customer(username, password, db_path)
     try:
-        rec = submit_revoke_request(cert_id, user["id"], reason, db_path)
+        rec = submit_revoke_request(
+            cert_id, user["id"], reason, db_path,
+            key_compromise=key_compromise,
+        )
     except RevocationWorkflowError as e:
         raise RemoteCSRError(str(e)) from e
     write_audit(
         db_path, user["id"], Action.REVOKE_REQUESTED,
         target_type="revocation_request", target_id=str(rec["id"]),
-        details={"cert_id": cert_id, "source": "remote_csr_api"},
+        details={
+            "cert_id": cert_id,
+            "key_compromise": bool(key_compromise),
+            "source": "remote_csr_api",
+        },
     )
     return rec
 

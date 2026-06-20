@@ -45,6 +45,7 @@ class Action:
     # Customer keys
     KEY_GENERATED      = "key_generated"
     KEY_DELETED        = "key_deleted"
+    KEY_COMPROMISED    = "key_compromised"
 
     # CSR workflow
     CSR_SUBMITTED      = "csr_submitted"

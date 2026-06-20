@@ -210,7 +210,7 @@ class RevokeCertDialog(tk.Toplevel):
             ttk.Label(
                 frame,
                 text=(
-                    f"⚠ Khóa này còn đứng sau {len(self._others)} cert hiệu lực khác:\n"
+                    f"⚠ Khóa này còn đứng sau {len(self._others)} cert chưa thu hồi khác:\n"
                     f"{names}{more}\n"
                     "Nếu key bị lộ, chỉ revoke cert hiện tại KHÔNG đủ — bật tùy "
                     "chọn trên để thu hồi đồng loạt."
@@ -310,11 +310,27 @@ class RevokeCertDialog(tk.Toplevel):
                 "reason": reason,
             },
         )
+        compromised = result.get("compromised_key_ids") or []
+        if compromised:
+            write_audit(
+                self.app.db_path, self.app.session["id"], Action.KEY_COMPROMISED,
+                target_type="customer_key",
+                target_id=",".join(map(str, compromised)),
+                details={
+                    "key_fingerprint": result["key_fingerprint"],
+                    "compromised_key_ids": compromised,
+                    "via": "revoke_by_key",
+                },
+            )
         messagebox.showinfo(
             "Đã thu hồi theo khóa",
             f"Đã thu hồi {result['revoked_count']} cert dùng chung khóa "
             f"(fingerprint {result['key_fingerprint'][:16]}…).\n"
-            f"Cert IDs: {', '.join(map(str, result['revoked_ids'])) or '—'}",
+            f"Cert IDs: {', '.join(map(str, result['revoked_ids'])) or '—'}\n"
+            + (f"Đã đánh dấu LỘ KHÓA + hủy private key của {len(compromised)} "
+               f"keypair (id: {', '.join(map(str, compromised))})."
+               if compromised else
+               "Không có keypair nào trong hệ thống khớp khóa để đánh dấu."),
         )
         self._finish()
 

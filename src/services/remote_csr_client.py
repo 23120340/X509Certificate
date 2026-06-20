@@ -166,6 +166,7 @@ def submit_revocation_to_admin_api(
     password: str,
     cert_id: int,
     reason: str,
+    key_compromise: bool = False,
     token: str = "",
 ) -> dict:
     data = _post_json(
@@ -176,6 +177,7 @@ def submit_revocation_to_admin_api(
             "password": password,
             "cert_id": cert_id,
             "reason": reason,
+            "key_compromise": bool(key_compromise),
         },
         token=token,
     )

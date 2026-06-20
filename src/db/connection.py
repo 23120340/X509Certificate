@@ -36,12 +36,38 @@ def get_conn(db_path: str = DEFAULT_DB_PATH) -> sqlite3.Connection:
     return conn
 
 
+def _apply_migrations(conn: sqlite3.Connection) -> None:
+    """
+    Migration idempotent cho DB ĐÃ tồn tại. schema.sql chỉ `CREATE TABLE IF NOT
+    EXISTS` nên KHÔNG tự thêm cột mới vào bảng cũ — phần này bù lại bằng
+    ALTER TABLE ADD COLUMN (chỉ chạy khi cột chưa có).
+    """
+    def _columns(table: str) -> "set[str]":
+        return {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+
+    # revocation_requests.key_compromise — cờ 'lộ khóa' để approve cascade
+    # revoke-by-key (services/revocation_workflow.approve_revocation).
+    if "key_compromise" not in _columns("revocation_requests"):
+        conn.execute(
+            "ALTER TABLE revocation_requests "
+            "ADD COLUMN key_compromise INTEGER NOT NULL DEFAULT 0"
+        )
+
+    # customer_keys.compromised_at — đánh dấu key đã lộ (đã wipe private key)
+    # (services/customer_keys.compromise_keys_for_fingerprint).
+    if "compromised_at" not in _columns("customer_keys"):
+        conn.execute(
+            "ALTER TABLE customer_keys ADD COLUMN compromised_at TEXT"
+        )
+
+
 def init_db(db_path: str = DEFAULT_DB_PATH) -> None:
-    """Tạo schema. Idempotent (CREATE TABLE IF NOT EXISTS)."""
+    """Tạo schema. Idempotent (CREATE TABLE IF NOT EXISTS) + migration cột mới."""
     schema = SCHEMA_PATH.read_text(encoding="utf-8")
     conn = get_conn(db_path)
     try:
         conn.executescript(schema)
+        _apply_migrations(conn)
     finally:
         conn.close()
 

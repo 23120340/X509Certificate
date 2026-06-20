@@ -71,19 +71,26 @@ class MyKeysFrame(ttk.Frame):
             self.tree.heading(c, text=labels[c])
             self.tree.column(c, width=widths[c], anchor="w")
         self.tree.pack(fill=tk.BOTH, expand=True)
+        self.tree.tag_configure("compromised", foreground="#c0392b")
 
     def refresh(self) -> None:
         for iid in self.tree.get_children():
             self.tree.delete(iid)
         for k in list_keys(self.app.session["id"], self.app.db_path):
+            if k.get("compromised_at"):
+                suffix = " 🔴 ĐÃ LỘ KHÓA (private key đã hủy)"
+            elif k.get("is_public_only"):
+                suffix = " (LAN public-only)"
+            else:
+                suffix = ""
             self.tree.insert(
                 "", tk.END, iid=str(k["id"]),
                 values=(
-                    k["id"],
-                    k["name"] + (" (LAN public-only)" if k.get("is_public_only") else ""),
+                    k["id"], k["name"] + suffix,
                     k["algorithm"], k["key_size"],
                     fmt_local(k["created_at"]),
                 ),
+                tags=("compromised",) if k.get("compromised_at") else (),
             )
 
     def _selected_key_id(self) -> "int | None":

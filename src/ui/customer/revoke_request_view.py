@@ -93,22 +93,35 @@ class RevokeRequestFrame(ttk.Frame):
         self.reason_text = tk.Text(form, height=4, width=48, wrap=tk.WORD)
         self.reason_text.grid(row=1, column=1, pady=4, padx=4, sticky="ew")
 
-        submit_row = 2
+        # Cờ "lộ khóa" → admin approve sẽ thu hồi MỌI cert dùng chung khóa.
+        self.key_compromise_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            form,
+            text="Khóa đã bị lộ — đề nghị thu hồi TẤT CẢ cert dùng chung khóa này",
+            variable=self.key_compromise_var,
+        ).grid(row=2, column=1, sticky="w", pady=(2, 0), padx=4)
+        ttk.Label(
+            form,
+            text="(Dùng khi nghi private key bị lộ: một key có thể đứng sau nhiều domain.)",
+            foreground="#888", font=font("caption"),
+        ).grid(row=3, column=1, sticky="w", padx=4)
+
+        next_row = 4
         if self.remote_api_url:
             ttk.Label(form, text="Mật khẩu customer trên Admin:").grid(
-                row=2, column=0, sticky="e", pady=4, padx=4,
+                row=next_row, column=0, sticky="e", pady=4, padx=4,
             )
             self.remote_password_entry = ttk.Entry(form, width=48, show="*")
             self.remote_password_entry.grid(
-                row=2, column=1, pady=4, padx=4, sticky="ew"
+                row=next_row, column=1, pady=4, padx=4, sticky="ew"
             )
             if getattr(self.app, "remote_csr_password", ""):
                 self.remote_password_entry.insert(0, self.app.remote_csr_password)
-            submit_row = 3
+            next_row += 1
 
         ttk.Button(form, text="Gửi yêu cầu",
                    command=self.on_submit).grid(
-            row=submit_row, column=1, sticky="w", pady=(8, 0), padx=4,
+            row=next_row, column=1, sticky="w", pady=(8, 0), padx=4,
         )
         form.columnconfigure(1, weight=1)
 
@@ -168,6 +181,7 @@ class RevokeRequestFrame(ttk.Frame):
             )
             return
         reason = self.reason_text.get("1.0", tk.END).strip()
+        key_compromise = self.key_compromise_var.get()
         if self.remote_api_url:
             try:
                 req = submit_revocation_to_admin_api(
@@ -176,6 +190,7 @@ class RevokeRequestFrame(ttk.Frame):
                     password=self._remote_password(),
                     cert_id=cert_id,
                     reason=reason,
+                    key_compromise=key_compromise,
                     token=self.remote_api_token,
                 )
             except RemoteCSRClientError as e:
@@ -185,6 +200,7 @@ class RevokeRequestFrame(ttk.Frame):
                 "Đã gửi", f"Yêu cầu #{req['id']} đã gửi tới admin.",
             )
             self.reason_text.delete("1.0", tk.END)
+            self.key_compromise_var.set(False)
             self.refresh_certs()
             self.refresh_requests()
             return
@@ -192,6 +208,7 @@ class RevokeRequestFrame(ttk.Frame):
         try:
             req = submit_revoke_request(
                 cert_id, self.app.session["id"], reason, self.app.db_path,
+                key_compromise=key_compromise,
             )
         except RevocationWorkflowError as e:
             messagebox.showerror("Gửi yêu cầu thất bại", str(e))
@@ -200,12 +217,20 @@ class RevokeRequestFrame(ttk.Frame):
         write_audit(
             self.app.db_path, self.app.session["id"], Action.REVOKE_REQUESTED,
             target_type="revocation_request", target_id=str(req["id"]),
-            details={"cert_id": cert_id, "reason": reason},
+            details={
+                "cert_id": cert_id,
+                "reason": reason,
+                "key_compromise": key_compromise,
+            },
         )
         messagebox.showinfo(
-            "Đã gửi", f"Yêu cầu #{req['id']} đã gửi tới admin.",
+            "Đã gửi",
+            f"Yêu cầu #{req['id']} đã gửi tới admin."
+            + ("\n(Đã đánh dấu LỘ KHÓA — admin sẽ thu hồi mọi cert dùng chung khóa.)"
+               if key_compromise else ""),
         )
         self.reason_text.delete("1.0", tk.END)
+        self.key_compromise_var.set(False)
         self.refresh_certs()
         self.refresh_requests()
 
@@ -321,6 +346,7 @@ class RevocationRequestDetailDialog(tk.Toplevel):
             f"Domain:        {rec.get('common_name') or '—'}\n"
             f"Serial:        {rec.get('serial_hex') or '—'}\n"
             f"Status:        {rec['status']}\n"
+            f"Lộ khóa:       {'Có — cascade revoke-by-key' if rec.get('key_compromise') else 'Không'}\n"
             f"Gửi lúc:       {fmt_local(rec['submitted_at'])}\n"
             f"Duyệt lúc:     {fmt_local(rec.get('reviewed_at'))}\n"
             f"Reviewed by:   {rec.get('reviewed_by') or '—'}\n"

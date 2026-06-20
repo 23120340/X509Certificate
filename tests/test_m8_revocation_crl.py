@@ -32,10 +32,10 @@ from core import encryption
 from core.encryption import reset_master_key_cache
 from services.auth import register_user
 from services.ca_admin import create_root_ca, load_active_root_ca_with_key
-from services.customer_keys import generate_keypair
+from services.customer_keys import generate_keypair, get_key_meta
 from services.csr_workflow import submit_csr
 from services.csr_admin import approve_csr
-from services.cert_lifecycle import revoke_cert
+from services.cert_lifecycle import revoke_cert, list_all_certs
 from services.revocation_workflow import (
     submit_revoke_request, list_my_revocation_requests,
     list_pending_revocations, list_all_revocations,
@@ -46,6 +46,7 @@ from services.crl_publish import (
     publish_crl, snapshot_revoked_serials, get_published_crl_info,
     CRLPublishError,
 )
+from services.remote_csr import submit_remote_revocation_request
 
 
 class TestEnv:
@@ -73,6 +74,12 @@ class TestEnv:
     def issue_cert(self, owner_id: int, cn: str) -> int:
         kp = generate_keypair(owner_id, f"k-{cn}", 2048, self.db_path)
         csr = submit_csr(owner_id, kp["id"], cn, [], self.db_path)
+        issued = approve_csr(csr["id"], self.admin_id, 365, self.db_path)
+        return issued["id"]
+
+    def issue_cert_with_key(self, owner_id: int, key_id: int, cn: str) -> int:
+        """Dùng LẠI keypair `key_id` để nhiều cert chia sẻ chung public key."""
+        csr = submit_csr(owner_id, key_id, cn, [], self.db_path)
         issued = approve_csr(csr["id"], self.admin_id, 365, self.db_path)
         return issued["id"]
 
@@ -462,11 +469,205 @@ def test_filter_status_in_list_all():
         env.cleanup()
 
 
+# ── Revoke-by-key qua revocation request (cờ lộ khóa) ──────────────────────────
+
+def test_submit_revoke_request_key_compromise_flag():
+    """Cờ key_compromise được lưu + trả về qua submit và detail."""
+    env = TestEnv()
+    try:
+        cert_id = env.issue_cert(env.alice_id, "kc-flag.com")
+        req = submit_revoke_request(
+            cert_id, env.alice_id, "private key leaked", env.db_path,
+            key_compromise=True,
+        )
+        assert req["key_compromise"] is True
+        rec = get_revocation_detail(req["id"], env.db_path)
+        assert rec["key_compromise"] == 1   # lưu dạng int 0/1 trong SQLite
+
+        # Mặc định (không truyền) = không lộ khóa
+        cert2 = env.issue_cert(env.alice_id, "kc-default.com")
+        req2 = submit_revoke_request(cert2, env.alice_id, "x", env.db_path)
+        assert req2["key_compromise"] is False
+        print("  [kc-flag] PASS ✓ — cờ key_compromise lưu + trả về; mặc định False")
+    finally:
+        env.cleanup()
+
+
+def test_approve_key_compromise_cascades():
+    """Approve request lộ khóa → thu hồi MỌI cert chung khóa; cert key khác giữ nguyên."""
+    env = TestEnv()
+    try:
+        ocsp = os.path.join(env.tmpdir, "ocsp.json")
+        kp = generate_keypair(env.alice_id, "kc-key", 2048, env.db_path)
+        c1 = env.issue_cert_with_key(env.alice_id, kp["id"], "kc-a.com")
+        c2 = env.issue_cert_with_key(env.alice_id, kp["id"], "kc-b.com")
+        safe = env.issue_cert(env.alice_id, "kc-safe.com")  # key KHÁC
+
+        req = submit_revoke_request(
+            c1, env.alice_id, "laptop stolen — key leaked", env.db_path,
+            key_compromise=True,
+        )
+        result = approve_revocation(
+            req["id"], env.admin_id, env.db_path, ocsp_db_path=ocsp,
+        )
+        assert result["key_compromise"] is True
+        assert result["revoked_count"] == 2, result
+        assert set(result["revoked_ids"]) == {c1, c2}, result
+
+        certs = {c["id"]: c for c in list_all_certs(env.db_path)}
+        assert certs[c1]["status"] == "revoked" and certs[c2]["status"] == "revoked"
+        assert certs[safe]["status"] == "active", "cert dùng key khác KHÔNG được đụng"
+        # Lý do được đánh dấu cascade để audit phân biệt
+        assert "cascade" in (certs[c2]["revocation_reason"] or "").lower(), \
+            certs[c2]["revocation_reason"]
+
+        rec = get_revocation_detail(req["id"], env.db_path)
+        assert rec["status"] == "approved"
+        print("  [kc-cascade] PASS ✓ — approve lộ khóa thu hồi mọi cert chung khóa, chừa key khác, reason đánh dấu cascade")
+    finally:
+        env.cleanup()
+
+
+def test_approve_key_compromise_scoped_to_owner():
+    """Cascade lộ khóa DO CUSTOMER yêu cầu chỉ tác động cert của CHÍNH họ (BOLA):
+    không đụng cert người khác kể cả khi (cực hiếm) trùng public key."""
+    env = TestEnv()
+    try:
+        ocsp = os.path.join(env.tmpdir, "ocsp.json")
+        kp = generate_keypair(env.alice_id, "scoped-key", 2048, env.db_path)
+        c1 = env.issue_cert_with_key(env.alice_id, kp["id"], "sc-a.com")
+        c2 = env.issue_cert_with_key(env.alice_id, kp["id"], "sc-b.com")
+
+        # Chèn 1 cert của BOB dùng CHÍNH cert_pem của Alice (cùng public key).
+        conn = get_conn(env.db_path)
+        try:
+            base = conn.execute(
+                "SELECT cert_pem, not_valid_before, not_valid_after "
+                "FROM issued_certs WHERE id = ?", (c1,),
+            ).fetchone()
+            conn.execute("BEGIN")
+            conn.execute(
+                "INSERT INTO issued_certs "
+                "(owner_id, serial_hex, common_name, cert_pem, "
+                " not_valid_before, not_valid_after, issued_at, issued_by) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (env.bob_id, "deadbeef01", "bob-shared.com", base["cert_pem"],
+                 base["not_valid_before"], base["not_valid_after"],
+                 base["not_valid_before"], env.admin_id),
+            )
+            conn.execute("COMMIT")
+            bob_cert_id = conn.execute(
+                "SELECT id FROM issued_certs WHERE serial_hex = 'deadbeef01'",
+            ).fetchone()["id"]
+        finally:
+            conn.close()
+
+        req = submit_revoke_request(
+            c1, env.alice_id, "key leaked", env.db_path, key_compromise=True,
+        )
+        result = approve_revocation(
+            req["id"], env.admin_id, env.db_path, ocsp_db_path=ocsp,
+        )
+        assert set(result["revoked_ids"]) == {c1, c2}, result
+
+        by_id = {c["id"]: c["status"] for c in list_all_certs(env.db_path)}
+        assert by_id[c1] == "revoked" and by_id[c2] == "revoked"
+        assert by_id[bob_cert_id] == "active", \
+            "cascade do Alice yêu cầu KHÔNG được đụng cert của Bob (BOLA)"
+        print("  [kc-scoped] PASS ✓ — cascade lộ khóa giới hạn trong cert của chủ sở hữu (BOLA-safe)")
+    finally:
+        env.cleanup()
+
+
+def test_remote_key_compromise_threads_and_cascades():
+    """Cờ key_compromise đi qua lớp remote (submit_remote_revocation_request) →
+    approve vẫn cascade đúng."""
+    env = TestEnv()
+    try:
+        ocsp = os.path.join(env.tmpdir, "ocsp.json")
+        kp = generate_keypair(env.alice_id, "remote-kc", 2048, env.db_path)
+        c1 = env.issue_cert_with_key(env.alice_id, kp["id"], "rk-a.com")
+        c2 = env.issue_cert_with_key(env.alice_id, kp["id"], "rk-b.com")
+
+        rec = submit_remote_revocation_request(
+            username="alice", password="AlicePw123",
+            cert_id=c1, reason="leaked via LAN", db_path=env.db_path,
+            key_compromise=True,
+        )
+        assert rec["key_compromise"] is True
+        result = approve_revocation(
+            rec["id"], env.admin_id, env.db_path, ocsp_db_path=ocsp,
+        )
+        assert set(result["revoked_ids"]) == {c1, c2}, result
+        print("  [remote-kc] PASS ✓ — cờ lộ khóa đi qua lớp remote + cascade khi approve")
+    finally:
+        env.cleanup()
+
+
+def test_approve_without_compromise_single_only():
+    """Không tick lộ khóa → chỉ thu hồi đúng cert yêu cầu, cert chung khóa còn active."""
+    env = TestEnv()
+    try:
+        kp = generate_keypair(env.alice_id, "single-key", 2048, env.db_path)
+        c1 = env.issue_cert_with_key(env.alice_id, kp["id"], "sg-a.com")
+        c2 = env.issue_cert_with_key(env.alice_id, kp["id"], "sg-b.com")
+
+        req = submit_revoke_request(
+            c1, env.alice_id, "domain retired", env.db_path,
+            key_compromise=False,
+        )
+        result = approve_revocation(req["id"], env.admin_id, env.db_path)
+        assert result["key_compromise"] is False
+        assert result["revoked_count"] == 1
+        assert result["revoked_ids"] == [c1]
+
+        by_id = {c["id"]: c["status"] for c in list_all_certs(env.db_path)}
+        assert by_id[c1] == "revoked"
+        assert by_id[c2] == "active", "không lộ khóa → cert chung khóa vẫn active"
+        # Không lộ khóa → keypair KHÔNG bị đánh dấu/wipe
+        meta = get_key_meta(kp["id"], env.alice_id, env.db_path)
+        assert meta["compromised_at"] is None and meta["is_public_only"] == 0
+        print("  [no-kc-single] PASS ✓ — không lộ khóa → chỉ revoke 1 cert, key giữ nguyên")
+    finally:
+        env.cleanup()
+
+
+def test_approve_key_compromise_marks_keypair():
+    """approve request lộ khóa → đánh dấu + WIPE keypair của chủ sở hữu request."""
+    env = TestEnv()
+    try:
+        ocsp = os.path.join(env.tmpdir, "ocsp.json")
+        kp = generate_keypair(env.alice_id, "kc-mark", 2048, env.db_path)
+        c1 = env.issue_cert_with_key(env.alice_id, kp["id"], "km-a.com")
+        env.issue_cert_with_key(env.alice_id, kp["id"], "km-b.com")
+
+        req = submit_revoke_request(
+            c1, env.alice_id, "leaked", env.db_path, key_compromise=True,
+        )
+        result = approve_revocation(
+            req["id"], env.admin_id, env.db_path, ocsp_db_path=ocsp,
+        )
+        assert kp["id"] in result["compromised_key_ids"], result
+
+        meta = get_key_meta(kp["id"], env.alice_id, env.db_path)
+        assert meta["compromised_at"] is not None
+        assert meta["is_public_only"] == 1, "private key phải bị wipe"
+        print("  [kc-mark-key] PASS ✓ — approve lộ khóa đánh dấu + wipe keypair của chủ sở hữu")
+    finally:
+        env.cleanup()
+
+
 # ── Runner ────────────────────────────────────────────────────────────────────
 
 TESTS = [
     test_submit_revoke_request_happy,
     test_submit_validation,
+    test_submit_revoke_request_key_compromise_flag,
+    test_approve_key_compromise_cascades,
+    test_approve_key_compromise_scoped_to_owner,
+    test_remote_key_compromise_threads_and_cascades,
+    test_approve_without_compromise_single_only,
+    test_approve_key_compromise_marks_keypair,
     test_approve_revocation_marks_cert_revoked,
     test_direct_revoke_syncs_ocsp_immediately,
     test_approve_revocation_syncs_ocsp_immediately_without_crl_publish,

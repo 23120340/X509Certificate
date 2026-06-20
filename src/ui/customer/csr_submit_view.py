@@ -148,7 +148,7 @@ class CSRSubmitFrame(ttk.Frame):
         """Reload list keypair từ DB vào combobox."""
         self._keys = [
             k for k in list_keys(self.app.session["id"], self.app.db_path)
-            if not k.get("is_public_only")
+            if not k.get("is_public_only") and not k.get("compromised_at")
         ]
         values = [
             f"#{k['id']} — {k['name']} ({k.get('algorithm', 'RSA')}"

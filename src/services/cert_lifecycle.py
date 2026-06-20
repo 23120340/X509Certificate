@@ -20,7 +20,6 @@ Cert status được suy ra động (không lưu trong DB):
   active    → ngược lại
 """
 
-import hashlib
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -32,6 +31,7 @@ from core import keyalg
 from core.cert_builder import reissue_cert_for_renewal
 from db.connection import conn_scope, transaction
 from services.ca_admin import load_active_root_ca_with_key, CAError
+from services.customer_keys import compromise_keys_for_fingerprint
 from services.crl_publish import DEFAULT_OCSP_DB_PATH, sync_ocsp_db, publish_crl
 from services.system_config import get_config, get_hash_algorithm
 
@@ -204,12 +204,8 @@ def revoke_cert(
 # bắt được cả cert renew/re-issue lẫn cert không gắn CSR nào (vd cert external/đổi CA).
 
 def _spki_fingerprint(cert) -> str:
-    """SHA-256 (hex) của SubjectPublicKeyInfo (DER) — định danh ổn định của public key."""
-    spki = cert.public_key().public_bytes(
-        serialization.Encoding.DER,
-        serialization.PublicFormat.SubjectPublicKeyInfo,
-    )
-    return hashlib.sha256(spki).hexdigest()
+    """SHA-256 (hex) SPKI của public key trong cert (keyalg.public_key_fingerprint)."""
+    return keyalg.public_key_fingerprint(cert.public_key())
 
 
 def _fingerprint_of_pem(cert_pem) -> "str | None":
@@ -237,10 +233,14 @@ def _anchor_fingerprint(cert_id: int, db_path: str) -> "tuple[dict, str]":
 
 def _scan_certs_with_fingerprint(
     target_fp: str, db_path: str, only_unrevoked: bool,
+    owner_id: Optional[int] = None,
 ) -> "list[dict]":
     """Quét issued_certs, trả các row có cùng key-fingerprint (status computed,
     bỏ cert_pem). Dùng chung cho certs_sharing_public_key + revoke_certs_by_key
-    nên cả hai luôn nhìn CÙNG một tập khóa."""
+    nên cả hai luôn nhìn CÙNG một tập khóa.
+
+    owner_id != None → chỉ xét cert của owner đó (giới hạn cascade trong phạm vi
+    1 chủ sở hữu, dùng cho yêu cầu thu hồi do chính customer gửi)."""
     now = datetime.now(timezone.utc)
     out: "list[dict]" = []
     with conn_scope(db_path) as conn:
@@ -252,6 +252,8 @@ def _scan_certs_with_fingerprint(
             "ORDER BY c.id DESC"
         ).fetchall()
     for r in rows:
+        if owner_id is not None and r["owner_id"] != owner_id:
+            continue   # giới hạn phạm vi chủ sở hữu (rẻ hơn parse PEM → check trước)
         if _fingerprint_of_pem(r["cert_pem"]) != target_fp:
             continue
         status = _compute_status(r, now)
@@ -264,21 +266,33 @@ def _scan_certs_with_fingerprint(
     return out
 
 
+def key_fingerprint_for_cert(cert_id: int, db_path: str) -> str:
+    """Fingerprint public key của cert (SHA-256 SPKI). Raise CertLifecycleError
+    nếu cert không tồn tại / PEM hỏng."""
+    _anchor, fp = _anchor_fingerprint(cert_id, db_path)
+    return fp
+
+
 def certs_sharing_public_key(
     cert_id: int, db_path: str, only_unrevoked: bool = False,
+    owner_id: Optional[int] = None,
 ) -> "list[dict]":
     """
     Danh sách cert dùng CHUNG public key với `cert_id` (GỒM cả chính nó),
     newest-first. Mỗi phần tử có `status` computed, KHÔNG kèm cert_pem.
 
     only_unrevoked=True → bỏ cert đã thu hồi (dùng để xem trước khi cascade).
+    owner_id != None    → chỉ gom cert của owner đó (yêu cầu của customer chỉ
+                          được tác động lên cert của chính họ — giữ kỷ luật BOLA).
     Lưu ý: cert đã hết hạn (status 'expired') vẫn được tính — chúng chưa thu
     hồi nên revoke-by-key vẫn nên gom để đánh dấu thu hồi rõ ràng khi lộ khóa.
 
     Raise CertLifecycleError nếu cert_id không tồn tại / PEM hỏng.
     """
     _anchor, target_fp = _anchor_fingerprint(cert_id, db_path)
-    return _scan_certs_with_fingerprint(target_fp, db_path, only_unrevoked)
+    return _scan_certs_with_fingerprint(
+        target_fp, db_path, only_unrevoked, owner_id=owner_id,
+    )
 
 
 def revoke_certs_by_key(
@@ -292,7 +306,10 @@ def revoke_certs_by_key(
     Thu hồi TẤT CẢ cert chưa-thu-hồi dùng CHUNG public key với `cert_id`
     (containment khi nghi ngờ lộ khóa). Idempotent: cert đã revoked được bỏ qua.
 
-    Atomic: mọi UPDATE nằm trong 1 transaction, sau đó sync OCSP 1 lần.
+    Thứ tự FAIL-SAFE: (1) thu hồi cert — mọi UPDATE trong 1 transaction;
+    (2) sync OCSP; (3) đánh dấu + wipe keypair lộ. Bước (3) chạy SAU vì việc
+    thu hồi cert là containment quan trọng nhất; nếu lỗi giữa (1) và (3), cert
+    đã revoked (an toàn) và bước wipe key là idempotent, chạy lại được.
 
     Trả về dict {anchor_id, key_fingerprint, matched, revoked_ids,
                  already_revoked_ids, revoked_count}.
@@ -327,13 +344,18 @@ def revoke_certs_by_key(
         # Đồng bộ OCSP 1 lần sau cả batch (giống reissue_all_under_active_ca).
         sync_ocsp_db(db_path, ocsp_db_path)
 
+    # Lộ khóa → đánh dấu + wipe private key của MỌI keypair dùng khóa này
+    # (cross-owner: đây là công cụ của Admin, có thẩm quyền containment).
+    compromised_key_ids = compromise_keys_for_fingerprint(key_fp, db_path)
+
     return {
-        "anchor_id":           cert_id,
-        "key_fingerprint":     key_fp,
-        "matched":             len(siblings),
-        "revoked_ids":         revoked_ids,
-        "already_revoked_ids": already,
-        "revoked_count":       len(revoked_ids),
+        "anchor_id":            cert_id,
+        "key_fingerprint":      key_fp,
+        "matched":              len(siblings),
+        "revoked_ids":          revoked_ids,
+        "already_revoked_ids":  already,
+        "revoked_count":        len(revoked_ids),
+        "compromised_key_ids":  compromised_key_ids,
     }
 
 

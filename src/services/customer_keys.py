@@ -131,6 +131,7 @@ def list_keys(owner_id: int, db_path: str) -> "list[dict]":
     with conn_scope(db_path) as conn:
         rows = conn.execute(
             "SELECT id, name, algorithm, key_size, public_key_pem, created_at, "
+            "       compromised_at, "
             "       CASE WHEN length(encrypted_private_key) = 0 THEN 1 ELSE 0 END "
             "       AS is_public_only "
             "FROM customer_keys WHERE owner_id = ? ORDER BY id DESC",
@@ -145,13 +146,74 @@ def get_key_meta(key_id: int, owner_id: int, db_path: str) -> Optional[dict]:
     with conn_scope(db_path) as conn:
         row = conn.execute(
             "SELECT id, owner_id, name, algorithm, key_size, public_key_pem, "
-            "       created_at, "
+            "       created_at, compromised_at, "
             "       CASE WHEN length(encrypted_private_key) = 0 THEN 1 ELSE 0 END "
             "       AS is_public_only FROM customer_keys "
             "WHERE id = ? AND owner_id = ?",
             (key_id, owner_id),
         ).fetchone()
         return dict(row) if row else None
+
+
+def _fingerprint_from_public_pem(pem) -> "str | None":
+    """Fingerprint khóa từ public-key PEM (str/bytes). None nếu PEM hỏng —
+    có WARN ra stderr để không âm thầm bỏ sót key khi đối chiếu lộ khóa
+    (KHÔNG tự ý wipe key không đọc được: tránh phá nhầm key hợp lệ)."""
+    try:
+        raw = pem.encode("ascii") if isinstance(pem, str) else bytes(pem)
+        pub = serialization.load_pem_public_key(raw)
+    except Exception as e:
+        import sys
+        print(
+            f"[customer_keys] WARN: public_key_pem không parse được khi đối "
+            f"chiếu fingerprint (key có thể cần kiểm tra thủ công): {e}",
+            file=sys.stderr,
+        )
+        return None
+    return keyalg.public_key_fingerprint(pub)
+
+
+def compromise_keys_for_fingerprint(
+    fingerprint: str, db_path: str, owner_id: Optional[int] = None,
+) -> "list[int]":
+    """
+    Đánh dấu MỌI keypair có public key khớp `fingerprint` là ĐÃ LỘ:
+      • set compromised_at = now
+      • WIPE encrypted_private_key + gcm_nonce → hủy bí mật, GIỮ metadata +
+        public key (row trở thành 'public-only', không ký được nữa).
+
+    KHÔNG xóa row: giữ lại để audit + chặn tái sử dụng (submit_csr từ chối key
+    đã compromised). Idempotent: bỏ qua key đã đánh dấu trước đó.
+
+    owner_id != None → chỉ trong phạm vi owner đó (cascade do customer yêu cầu,
+    giữ kỷ luật BOLA). owner_id None → mọi owner (công cụ revoke-by-key của Admin).
+
+    Trả về list id các key vừa được đánh dấu (chưa từng compromised).
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    affected: "list[int]" = []
+    with transaction(db_path) as conn:
+        rows = conn.execute(
+            "SELECT id, owner_id, public_key_pem, compromised_at FROM customer_keys"
+        ).fetchall()
+        for r in rows:
+            if owner_id is not None and r["owner_id"] != owner_id:
+                continue
+            if r["compromised_at"]:
+                continue  # đã đánh dấu rồi
+            if _fingerprint_from_public_pem(r["public_key_pem"]) != fingerprint:
+                continue
+            # Guard `compromised_at IS NULL` + rowcount: chỉ tính key thực sự
+            # vừa được đánh dấu (chính xác kể cả khi có thao tác song song).
+            cur = conn.execute(
+                "UPDATE customer_keys SET compromised_at = ?, "
+                "    encrypted_private_key = ?, gcm_nonce = ? "
+                "WHERE id = ? AND compromised_at IS NULL",
+                (now, b"", b"", r["id"]),
+            )
+            if cur.rowcount > 0:
+                affected.append(r["id"])
+    return affected
 
 
 def load_private_key(key_id: int, owner_id: int, db_path: str):
