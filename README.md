@@ -2,7 +2,7 @@
 
 Đồ án Mã hoá và Ứng dụng (MHUD): ứng dụng desktop quản lý Certificate Authority nội bộ, hỗ trợ phát hành, gia hạn, thu hồi và kiểm tra chứng chỉ X.509 v3 cho dịch vụ website theo luồng PKCS#10 CSR, CRL và OCSP.
 
-> Trạng thái hiện tại: hoàn thành 20/20 yêu cầu chức năng A.1-A.11, B.1-B.9 và yêu cầu mã hoá dữ liệu nhạy cảm. Test hiện có: 79 test trong 9 file test, gồm 70 test chạy bằng pytest và 9 scenario chạy bằng runner riêng của Verification Lab.
+> Trạng thái hiện tại: hoàn thành 20/20 yêu cầu chức năng A.1-A.11, B.1-B.9 và yêu cầu mã hoá dữ liệu nhạy cảm. Test hiện có: 81 test trong 9 file test, gồm 72 test chạy bằng pytest và 9 scenario chạy bằng runner riêng của Verification Lab.
 
 ## Tính năng chính
 
@@ -99,7 +99,7 @@ X509Certificate/
     `-- test_scenarios.py
 ```
 
-Các file/thư mục runtime như `ca_app.db`, `master.key`, `certs/`, `received_certs/`, `client_artifacts/`, `backups/` và `.pytest_cache/` được sinh khi chạy app/test/script, không phải source chính.
+Các file/thư mục runtime như `ca_app.db`, `master.key`, `certs/`, `client_artifacts/`, `backups/` và `.pytest_cache/` được sinh khi chạy app/test/script, không phải source chính.
 
 ## Module quan trọng
 
@@ -261,7 +261,7 @@ Verification Lab dùng để minh hoạ:
 - `revoked_both`: fail ở CRL và OCSP.
 - `revoked_ocsp_only`: OCSP biết trước CRL.
 - `tampered`: fail vì chữ ký không khớp.
-- Renew/pin rotation: cert mới cùng issuer được chấp nhận trong giai đoạn overlap.
+- Renew: cert mới (khác serial) do cùng Root CA ký vẫn pass đủ 5 bước.
 
 ## Script hỗ trợ
 

@@ -12,18 +12,15 @@ Root CA + Trust Store.
   Bước 5: Gửi yêu cầu OCSP kiểm tra trạng thái trực tuyến.
 """
 
-import hashlib
 import ipaddress
 import json
 import socket
 import urllib.request
 from datetime import datetime, timezone
-from pathlib import Path
 from urllib.parse import urlparse
 
 from cryptography import x509
 from cryptography.x509.oid import ExtensionOID, AuthorityInformationAccessOID
-from cryptography.hazmat.primitives.serialization import Encoding
 from cryptography.exceptions import InvalidSignature
 
 from core import keyalg
@@ -345,270 +342,18 @@ def check_ocsp(cert):
     return True, "OK"
 
 
-# ── Pin warning + lưu cert (advisory, không ảnh hưởng overall pass) ─────────
-
-def _cert_fingerprint_sha256(cert) -> str:
-    """SHA-256 fingerprint của DER-encoded cert, dạng hex lowercase."""
-    der = cert.public_bytes(Encoding.DER)
-    return hashlib.sha256(der).hexdigest()
-
-
-def _safe_hostname(hostname: str) -> str:
-    """Sanitize hostname để làm tên thư mục an toàn trên mọi OS."""
-    return "".join(c if c.isalnum() or c in "-._" else "_" for c in hostname)
-
-
-def save_server_cert(cert_bytes: bytes, cert, hostname: str,
-                     base_dir: str = "received_certs",
-                     peer_address: str | None = None) -> Path:
-    """
-    Lưu PEM nhận được + metadata JSON vào received_certs/<hostname>/.
-    Tên file: <timestamp>_<fingerprint8>.pem (+ .json đi kèm).
-
-    `peer_address` (nếu có) ghi vào JSON dưới dạng "<ip>:<port>" để biết
-    *địa chỉ thực sự* đã kết nối — tách bạch với `hostname` do user nhập
-    (vốn có thể bị DNS đầu độc).
-
-    Trả về path file PEM.
-    """
-    host_dir = Path(base_dir) / _safe_hostname(hostname)
-    host_dir.mkdir(parents=True, exist_ok=True)
-
-    fp = _cert_fingerprint_sha256(cert)
-    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ")
-    stem = f"{ts}_{fp[:8]}"
-
-    pem_path = host_dir / f"{stem}.pem"
-    json_path = host_dir / f"{stem}.json"
-
-    pem_path.write_bytes(cert_bytes)
-
-    nb, na = _get_not_valid_times(cert)
-    metadata = {
-        "hostname": hostname,
-        "peer_address": peer_address,
-        "fingerprint_sha256": fp,
-        "serial_number": format(cert.serial_number, "x"),
-        "subject": cert.subject.rfc4514_string(),
-        "issuer": cert.issuer.rfc4514_string(),
-        "not_valid_before": nb.isoformat(),
-        "not_valid_after": na.isoformat(),
-        "received_at": datetime.now(timezone.utc).isoformat(),
-    }
-    json_path.write_text(
-        json.dumps(metadata, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
-    return pem_path
-
-
-def _build_pin_entry(cert, fingerprint: str, now_iso: str) -> dict:
-    """Đóng gói metadata của 1 pin để ghi vào pin.json."""
-    nb, na = _get_not_valid_times(cert)
-    return {
-        "fingerprint_sha256": fingerprint,
-        "subject":            cert.subject.rfc4514_string(),
-        "issuer":             cert.issuer.rfc4514_string(),
-        "not_valid_before":   nb.isoformat(),
-        "not_valid_after":    na.isoformat(),
-        "first_seen":         now_iso,
-        "last_seen":          now_iso,
-    }
-
-
-def _load_pin_store(pin_path: Path, hostname: str) -> dict:
-    """
-    Đọc pin.json. Tự migrate v1 (1 pin ở top-level) → v2 (list of pins).
-
-    Format v2:
-      {
-        "version": 2,
-        "hostname": "<host>",
-        "pins": [ {fingerprint_sha256, subject, issuer, not_valid_before,
-                   not_valid_after, first_seen, last_seen}, ... ]
-      }
-    """
-    if not pin_path.exists():
-        return {"version": 2, "hostname": hostname, "pins": []}
-
-    raw = json.loads(pin_path.read_text(encoding="utf-8"))
-
-    if raw.get("version") == 2 and isinstance(raw.get("pins"), list):
-        return raw
-
-    # v1 legacy: 1 pin ở top-level. Convert thành 1 entry trong list.
-    if "fingerprint_sha256" in raw:
-        return {
-            "version":  2,
-            "hostname": hostname,
-            "pins": [{
-                "fingerprint_sha256": raw["fingerprint_sha256"],
-                "subject":            raw.get("subject", ""),
-                "issuer":             raw.get("issuer", ""),
-                "not_valid_before":   raw.get("not_valid_before", ""),
-                "not_valid_after":    raw.get("not_valid_after", ""),
-                "first_seen":         raw.get("first_seen", ""),
-                "last_seen":          raw.get("last_seen", ""),
-            }],
-        }
-
-    # Unknown format — coi như chưa pin gì.
-    return {"version": 2, "hostname": hostname, "pins": []}
-
-
-def _save_pin_store(pin_path: Path, store: dict) -> None:
-    pin_path.write_text(
-        json.dumps(store, indent=2, ensure_ascii=False), encoding="utf-8"
-    )
-
-
-def _prune_expired_pins_inplace(store: dict, now: datetime) -> list[str]:
-    """
-    Xóa các pin có not_valid_after < now khỏi store["pins"].
-    Pin không có metadata not_valid_after (chuyển từ v1 thiếu field) thì giữ.
-    Trả về list fingerprint đã prune.
-    """
-    kept, pruned = [], []
-    for pin in store.get("pins", []):
-        na_str = pin.get("not_valid_after", "")
-        if not na_str:
-            kept.append(pin)
-            continue
-        try:
-            na = datetime.fromisoformat(na_str)
-        except ValueError:
-            kept.append(pin)
-            continue
-        if na < now:
-            pruned.append(pin["fingerprint_sha256"])
-        else:
-            kept.append(pin)
-    store["pins"] = kept
-    return pruned
-
-
-def check_pinned(cert, hostname: str,
-                 base_dir: str = "received_certs"):
-    """
-    Pin store v2 — hỗ trợ rotation có overlap.
-
-    Thuật toán mỗi lần gọi:
-      1. Load pin.json (tự migrate v1 → v2 nếu cần).
-      2. Auto-prune các pin có not_valid_after < now (cert cũ đã hết hạn
-         tự nhiên — bỏ khỏi store).
-      3. Sau prune, có 3 nhánh:
-         a) Store rỗng → TOFU: thêm pin hiện tại, OK.
-         b) Fingerprint hiện tại khớp 1 pin → cập nhật last_seen, OK.
-         c) Không khớp → kiểm tra issuer:
-            • Trùng issuer với ít nhất 1 pin còn lại → ROTATION hợp lệ:
-              ADD pin mới (không xóa cũ — backup pin trong overlap),
-              advisory WARN.
-            • Khác issuer hoàn toàn → FAIL: có thể đổi CA hợp lệ hoặc
-              đang MITM. User phải xóa pin.json để chấp nhận.
-
-    Bước phụ này là advisory — chỉ trả ok=False ở nhánh (c)-khác-issuer.
-    """
-    host_dir = Path(base_dir) / _safe_hostname(hostname)
-    host_dir.mkdir(parents=True, exist_ok=True)
-    pin_path = host_dir / "pin.json"
-
-    current_fp     = _cert_fingerprint_sha256(cert)
-    current_issuer = cert.issuer.rfc4514_string()
-    now            = datetime.now(timezone.utc)
-    now_iso        = now.isoformat()
-
-    store      = _load_pin_store(pin_path, hostname)
-    pruned_fps = _prune_expired_pins_inplace(store, now)
-    pins       = store["pins"]
-    pruned_tag = (
-        f" Vừa prune {len(pruned_fps)} pin hết hạn ("
-        f"{', '.join(fp[:8] for fp in pruned_fps)})."
-    ) if pruned_fps else ""
-
-    # (a) TOFU
-    if not pins:
-        store["pins"].append(_build_pin_entry(cert, current_fp, now_iso))
-        _save_pin_store(pin_path, store)
-        return True, (
-            f"Pin TẠO MỚI cho '{hostname}' (TOFU) — "
-            f"fingerprint={current_fp[:16]}…{pruned_tag}"
-        )
-
-    # (b) Match
-    for pin in pins:
-        if pin["fingerprint_sha256"] == current_fp:
-            pin["last_seen"] = now_iso
-            _save_pin_store(pin_path, store)
-            return True, (
-                f"Pin KHỚP — fingerprint={current_fp[:16]}… "
-                f"(first seen {pin.get('first_seen', '?')}; "
-                f"đang giữ {len(pins)} pin).{pruned_tag}"
-            )
-
-    # (c) Mismatch — coi pin có issuer rỗng (legacy v1 migration thiếu data)
-    # như khớp issuer hiện tại: lý do migrate v1 không backfill được issuer,
-    # nếu reject thì user phải xóa pin.json thủ công mỗi lần đổi schema. Trade
-    # off: kẻ tấn công nuốt v1 → v2 migration không thể, vì v1 yêu cầu file
-    # tồn tại sẵn (TOFU đã pass trước đó).
-    same_issuer_pins = [
-        p for p in pins
-        if p.get("issuer") == current_issuer or not p.get("issuer")
-    ]
-    if same_issuer_pins:
-        # Rotation hợp lệ — cộng pin mới vào, giữ pin cũ làm backup
-        store["pins"].append(_build_pin_entry(cert, current_fp, now_iso))
-        _save_pin_store(pin_path, store)
-        old_fps = ", ".join(p["fingerprint_sha256"][:8] for p in same_issuer_pins)
-        return True, (
-            f"Pin ROTATION được chấp nhận — cert mới cùng issuer "
-            f"('{current_issuer}'). Đã thêm fingerprint mới "
-            f"{current_fp[:8]}… (backup: {old_fps}); tổng "
-            f"{len(store['pins'])} pin.{pruned_tag}"
-        )
-
-    _save_pin_store(pin_path, store)
-    return False, (
-        f"Pin MISMATCH cho '{hostname}'! Cert nhận có issuer "
-        f"'{current_issuer}' không khớp issuer của bất kỳ pin nào đang giữ. "
-        f"Có thể đổi CA HỢP LỆ hoặc đang bị MITM. Xóa {pin_path} thủ công "
-        f"nếu chấp nhận.{pruned_tag}"
-    )
-
-
-def prune_expired_pins(hostname: str,
-                       base_dir: str = "received_certs") -> tuple[int, list[str]]:
-    """
-    Manual prune — gọi để dọn các pin đã hết hạn của 1 hostname mà không
-    cần verify lại. Trả về (số pin đã xóa, list fingerprint đã xóa).
-    """
-    host_dir = Path(base_dir) / _safe_hostname(hostname)
-    pin_path = host_dir / "pin.json"
-    if not pin_path.exists():
-        return 0, []
-    store = _load_pin_store(pin_path, hostname)
-    pruned_fps = _prune_expired_pins_inplace(store, datetime.now(timezone.utc))
-    _save_pin_store(pin_path, store)
-    return len(pruned_fps), pruned_fps
-
-
 # ── Orchestrator ──────────────────────────────────────────────────────────────
 
 def verify_certificate_full(cert_bytes: bytes, hostname: str,
                             trust_store_dir: str,
-                            log_callback=None,
-                            pin_dir: str = "received_certs",
-                            peer_address: str | None = None):
+                            log_callback=None):
     """
     Chạy đủ 5 bước xác thực trong mô hình Root CA + Trust Store.
 
     `trust_store_dir` là đường dẫn thư mục chứa Root CA certs tin cậy.
-    `pin_dir` là thư mục lưu cert nhận được + pin.json cho mỗi hostname.
-    `peer_address` (tuỳ chọn) là "<ip>:<port>" thực sự đã kết nối — ghi
-    vào JSON metadata để audit, tách bạch với hostname người dùng nhập.
 
-    Trả về (overall_pass: bool, results: list[(name, ok, msg)], cert).
-    Bước phụ "Pin warning + lưu cert" được thêm vào `results` nhưng
-    KHÔNG tính vào `overall_pass`.
+    Trả về (overall_pass: bool, results: list[(name, ok, msg)], cert),
+    trong đó overall_pass = AND của cả 5 bước.
     """
     cert = x509.load_pem_x509_certificate(cert_bytes)
     trusted_cas = load_trust_store(trust_store_dir)
@@ -644,25 +389,4 @@ def verify_certificate_full(cert_bytes: bytes, hostname: str,
         results.append((name, ok, msg))
 
     overall = all(ok for _, ok, _ in results)
-
-    # ── Bước phụ: lưu cert + pin warning (advisory, không tính vào overall) ──
-    log("--- Bước phụ - Lưu cert + Pin warning (advisory) ---")
-    try:
-        pem_path = save_server_cert(
-            cert_bytes, cert, hostname,
-            base_dir=pin_dir, peer_address=peer_address,
-        )
-        log(f"   [OK] Đã lưu cert tại: {pem_path} (peer={peer_address or 'n/a'})")
-    except Exception as e:
-        log(f"   [FAIL] Lỗi khi lưu cert: {e}")
-
-    try:
-        pin_ok, pin_msg = check_pinned(cert, hostname, base_dir=pin_dir)
-        log(f"   {'[OK]' if pin_ok else '[WARN]'} {pin_msg}")
-        results.append(("Bước phụ - Pin warning (advisory)", pin_ok, pin_msg))
-    except Exception as e:
-        log(f"   [FAIL] Lỗi khi check pin: {e}")
-        results.append(("Bước phụ - Pin warning (advisory)", True,
-                        f"Bỏ qua do lỗi: {e}"))
-
     return overall, results, cert

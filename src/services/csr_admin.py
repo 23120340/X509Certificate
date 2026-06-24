@@ -177,7 +177,7 @@ def approve_csr(
     # Read CSR row trước (ngoài transaction) để load CA key + build cert
     with conn_scope(db_path) as conn:
         row = conn.execute(
-            "SELECT id, requester_id, common_name, csr_pem, status "
+            "SELECT id, requester_id, customer_key_id, common_name, csr_pem, status "
             "FROM csr_requests WHERE id = ?", (csr_id,),
         ).fetchone()
     if row is None:
@@ -186,6 +186,21 @@ def approve_csr(
         raise CSRAdminError(
             f"CSR đang ở status '{row['status']}', không approve được."
         )
+
+    # Phòng tuyến thứ 2: keypair đã bị đánh dấu LỘ KHÓA (revoke-by-key / duyệt
+    # thu hồi lộ khóa) thì KHÔNG phát hành cert — kể cả khi CSR còn lọt 'pending'.
+    # Đồng nhất với submit_csr (vốn đã chặn key compromised ngay từ đầu).
+    if row["customer_key_id"] is not None:
+        with conn_scope(db_path) as conn:
+            krow = conn.execute(
+                "SELECT compromised_at FROM customer_keys WHERE id = ?",
+                (row["customer_key_id"],),
+            ).fetchone()
+        if krow is not None and krow["compromised_at"]:
+            raise CSRAdminError(
+                "Keypair của CSR này đã bị đánh dấu LỘ KHÓA (đã thu hồi) — "
+                "không thể phát hành cert. CSR cần được hủy."
+            )
 
     # Parse + verify CSR (proof of possession)
     csr_pem = bytes(row["csr_pem"])

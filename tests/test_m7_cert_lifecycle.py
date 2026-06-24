@@ -34,7 +34,7 @@ from services.auth import register_user
 from services.ca_admin import create_root_ca, load_active_root_ca_with_key
 from services.customer_keys import generate_keypair, get_key_meta
 from services.csr_workflow import submit_csr, domains_for_key, CSRError
-from services.csr_admin import approve_csr
+from services.csr_admin import approve_csr, list_all_csr, CSRAdminError
 from services.cert_lifecycle import (
     list_all_certs, list_certs_for_owner, get_cert_detail,
     revoke_cert, renew_cert,
@@ -454,6 +454,72 @@ def test_revoke_by_key_marks_and_wipes_keypair():
         env.cleanup()
 
 
+def test_revoke_by_key_cancels_pending_csrs():
+    """⭐ revoke-by-key phải HỦY luôn các CSR đang pending dùng chung khóa lộ;
+    CSR dùng key KHÁC không bị đụng; CSR đã hủy không approve được nữa."""
+    env = TestEnv()
+    try:
+        ocsp = os.path.join(env.tmpdir, "ocsp.json")
+        kp = generate_keypair(env.alice_id, "reuse-key", 2048, env.db_path)
+        # 4 CSR chung 1 key: duyệt 2 (ra cert), để 2 pending.
+        c1 = env.issue_cert_with_key(env.alice_id, kp["id"], "d1.com")
+        env.issue_cert_with_key(env.alice_id, kp["id"], "d2.com")
+        p3 = submit_csr(env.alice_id, kp["id"], "d3.com", [], env.db_path)
+        p4 = submit_csr(env.alice_id, kp["id"], "d4.com", [], env.db_path)
+        # CSR pending dùng key KHÁC — phải giữ nguyên.
+        kp_other = generate_keypair(env.alice_id, "other-key", 2048, env.db_path)
+        p_keep = submit_csr(env.alice_id, kp_other["id"], "keep.com", [], env.db_path)
+
+        res = revoke_certs_by_key(c1, env.admin_id, "Private key leaked",
+                                  env.db_path, ocsp_db_path=ocsp)
+        assert set(res["cancelled_csr_ids"]) == {p3["id"], p4["id"]}, res
+
+        status = {c["id"]: c["status"] for c in list_all_csr(env.db_path)}
+        assert status[p3["id"]] == "rejected", status
+        assert status[p4["id"]] == "rejected", status
+        assert status[p_keep["id"]] == "pending", "CSR key khác không được đụng"
+
+        # CSR đã hủy → approve phải bị chặn (status không còn pending).
+        try:
+            approve_csr(p3["id"], env.admin_id, 365, env.db_path)
+            assert False, "approve CSR đã hủy phải raise"
+        except CSRAdminError:
+            pass
+        print("  [revoke-by-key-cancels-csr] PASS ✓ — hủy CSR pending chung khóa; key khác giữ nguyên")
+    finally:
+        env.cleanup()
+
+
+def test_approve_csr_blocked_on_compromised_key():
+    """Phòng tuyến 2: approve_csr TỪ CHỐI nếu keypair của CSR đã bị đánh dấu LỘ
+    KHÓA — kể cả khi CSR còn lọt 'pending' (mô phỏng trường hợp lọt cascade)."""
+    env = TestEnv()
+    try:
+        kp = generate_keypair(env.alice_id, "comp-key", 2048, env.db_path)
+        csr = submit_csr(env.alice_id, kp["id"], "late.com", [], env.db_path)
+
+        # Mô phỏng: keypair bị đánh dấu lộ NHƯNG CSR vẫn pending (chưa qua cascade).
+        conn = get_conn(env.db_path)
+        try:
+            conn.execute("BEGIN")
+            conn.execute(
+                "UPDATE customer_keys SET compromised_at = ? WHERE id = ?",
+                (datetime.now(timezone.utc).isoformat(), kp["id"]),
+            )
+            conn.execute("COMMIT")
+        finally:
+            conn.close()
+
+        try:
+            approve_csr(csr["id"], env.admin_id, 365, env.db_path)
+            assert False, "approve trên key đã lộ phải raise"
+        except CSRAdminError as e:
+            assert "lộ" in str(e).lower(), str(e)
+        print("  [approve-blocked-compromised] PASS ✓ — approve_csr chặn CSR dùng key đã lộ")
+    finally:
+        env.cleanup()
+
+
 # ── Runner ────────────────────────────────────────────────────────────────────
 
 TESTS = [
@@ -469,6 +535,8 @@ TESTS = [
     test_revoke_by_key_cascade,
     test_revoke_by_key_catches_renewed,
     test_revoke_by_key_marks_and_wipes_keypair,
+    test_revoke_by_key_cancels_pending_csrs,
+    test_approve_csr_blocked_on_compromised_key,
     test_domains_for_key_warning_data,
 ]
 

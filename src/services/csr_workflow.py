@@ -20,12 +20,14 @@ import json
 from datetime import datetime, timezone
 from typing import Optional
 
-from core.csr import build_csr, csr_to_pem
+from core import keyalg
+from core.csr import build_csr, csr_to_pem, parse_csr
 from services.customer_keys import load_private_key, get_key_meta, CustomerKeyError
 from db.connection import conn_scope, transaction
 
 
 VALID_STATUS = ("pending", "approved", "rejected")
+MAX_CANCEL_REASON_LEN = 500
 
 
 class CSRError(Exception):
@@ -224,3 +226,69 @@ def cancel_csr(csr_id: int, requester_id: int, db_path: str) -> None:
             "WHERE id = ?",
             (now, requester_id, csr_id),
         )
+
+
+# ── Hủy CSR pending khi khóa bị thu hồi / lộ (containment) ────────────────────
+#
+# Khi một keypair bị vô hiệu hóa (Admin revoke-by-key, hoặc duyệt yêu cầu thu hồi
+# có cờ lộ khóa), mọi cert dùng khóa đó bị thu hồi VÀ keypair bị wipe. Nhưng CSR
+# đang 'pending' dùng chính khóa đó vẫn còn — nếu admin lỡ duyệt thì lại phát hành
+# cert mới TỪ MỘT KHÓA ĐÃ LỘ. PKI thực luôn loại bỏ yêu cầu cấp chứng chỉ trên
+# khóa đã thu hồi/lộ, nên ta hủy luôn các CSR pending đó cho khớp logic hạ tầng.
+#
+# Định danh khóa = SHA-256(SubjectPublicKeyInfo) trích trực tiếp từ public key
+# trong CSR PEM — CÙNG nguồn sự thật với cert_lifecycle/customer_keys, nên gom
+# đúng cả CSR LAN (chỉ có public key) lẫn CSR nội bộ.
+
+def _csr_pem_fingerprint(csr_pem) -> "str | None":
+    """Fingerprint khóa (SHA-256 SPKI) từ CSR PEM (bytes/str). None nếu PEM hỏng
+    (skip phòng thủ — không vì 1 CSR lỗi mà chặn cả batch)."""
+    try:
+        csr = parse_csr(bytes(csr_pem))
+    except Exception:
+        return None
+    return keyalg.public_key_fingerprint(csr.public_key())
+
+
+def cancel_pending_csrs_for_fingerprint(
+    fingerprint: str,
+    db_path: str,
+    admin_id: Optional[int] = None,
+    owner_id: Optional[int] = None,
+    reason: str = "Tự hủy: keypair đã bị thu hồi/đánh dấu lộ khóa.",
+) -> "list[int]":
+    """
+    Hủy MỌI CSR đang 'pending' có public key khớp `fingerprint` (đặt status
+    'rejected', ghi `reject_reason`). Dùng làm bước containment sau revoke-by-key
+    / duyệt thu hồi lộ khóa: khóa đã vô hiệu hóa không được phép sinh thêm cert.
+
+    owner_id != None → chỉ trong phạm vi chủ sở hữu đó (cascade do customer yêu
+    cầu — giữ kỷ luật BOLA). owner_id None → mọi chủ sở hữu (công cụ revoke-by-key
+    phía Admin, có thẩm quyền containment liên-chủ-sở-hữu).
+    `admin_id` (nếu có) được ghi vào reviewed_by để truy vết.
+
+    Idempotent: CSR đã không còn 'pending' được bỏ qua (guard rowcount).
+    Trả về list id các CSR vừa bị hủy.
+    """
+    reason = (reason or "").strip()[:MAX_CANCEL_REASON_LEN] or "key compromised"
+    now = datetime.now(timezone.utc).isoformat()
+    cancelled: "list[int]" = []
+    with transaction(db_path) as conn:
+        rows = conn.execute(
+            "SELECT id, requester_id, csr_pem FROM csr_requests "
+            "WHERE status = 'pending'"
+        ).fetchall()
+        for r in rows:
+            if owner_id is not None and r["requester_id"] != owner_id:
+                continue   # giới hạn phạm vi chủ sở hữu (rẻ hơn parse PEM → check trước)
+            if _csr_pem_fingerprint(r["csr_pem"]) != fingerprint:
+                continue
+            cur = conn.execute(
+                "UPDATE csr_requests SET status = 'rejected', "
+                "    reject_reason = ?, reviewed_at = ?, reviewed_by = ? "
+                "WHERE id = ? AND status = 'pending'",
+                (reason, now, admin_id, r["id"]),
+            )
+            if cur.rowcount > 0:
+                cancelled.append(r["id"])
+    return cancelled

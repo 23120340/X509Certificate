@@ -32,7 +32,6 @@ TEST_OCSP_DB  = os.path.join(TEST_DIR, "ocsp_db.json")
 TEST_ISSUER_CERT = os.path.join(TEST_DIR, "issuer.crt")
 TEST_ISSUER_KEY  = os.path.join(TEST_DIR, "issuer.key")
 TEST_TRUST_STORE = os.path.join(TEST_DIR, "trust_store")
-TEST_RECEIVED    = os.path.join(TEST_DIR, "received")
 
 BASE_PORT = 19001  # server test dùng port 19001, 19002, ...
 
@@ -45,7 +44,7 @@ from infra.crl_server import start_crl_server
 
 # OCSP state dict — set bởi setup(), share giữa các test để toggle enabled.
 _ocsp_state: dict = None
-from core.verify import fetch_certificate, verify_certificate_full, prune_expired_pins
+from core.verify import fetch_certificate, verify_certificate_full
 
 
 # ── Hạ tầng test ─────────────────────────────────────────────────────────────
@@ -104,17 +103,11 @@ def teardown():
         shutil.rmtree(TEST_DIR, ignore_errors=True)
 
 
-def _verify(port, pin_dir: str = None) -> tuple:
+def _verify(port) -> tuple:
     """Lấy cert từ port và chạy 5 bước. Trả về (overall, results)."""
-    cert_bytes, peer_address = fetch_certificate("localhost", port)
-    kwargs = dict(
-        trust_store_dir=TEST_TRUST_STORE,
-        peer_address=peer_address,
-    )
-    if pin_dir is not None:
-        kwargs["pin_dir"] = pin_dir
+    cert_bytes, _peer = fetch_certificate("localhost", port)
     overall, results, _ = verify_certificate_full(
-        cert_bytes, "localhost", **kwargs,
+        cert_bytes, "localhost", trust_store_dir=TEST_TRUST_STORE,
     )
     return overall, results
 
@@ -231,19 +224,13 @@ def test_h_tampered():
     print("  [h] PASS ✓ — tampered cert: FAIL ở Bước 1 (chữ ký không khớp)")
 
 
-def test_j_renew_rotation_pin_overlap():
+def test_j_renew_rotation_still_valid():
     """
-    (j) Renew với rotate key + pin overlap:
-        1. Tạo server flavor=valid → verify lần 1 → pin store có 1 entry (cert A).
-        2. Gọi mgr.renew_server(rotate_key=True) → cert B (vẫn valid, khác serial).
-        3. Verify lần 2 → 5 bước vẫn PASS; pin store giờ có 2 entry
-           (cùng issuer Root CA → ROTATION được chấp nhận, không reject).
-        4. Cả 2 pin đều còn not_valid_after > now (chưa hết hạn) → giữ nguyên,
-           không bị prune.
+    (j) Renew với rotate key:
+        1. Tạo server flavor=valid → verify lần 1 PASS.
+        2. Gọi mgr.renew_server(rotate_key=True) → cert mới (khác serial, vẫn valid).
+        3. Verify lần 2 → 5 bước vẫn PASS (cert mới do cùng Root CA ký).
     """
-    import json
-    from pathlib import Path
-
     port = _next_port()
     name = "test-renew"
     _mgr.add_server(name, port, "valid")
@@ -254,17 +241,8 @@ def test_j_renew_rotation_pin_overlap():
     assert entry.lifecycle == "valid"
     assert entry.flavor == "valid"
 
-    # Verify lần 1 — pin TOFU
-    overall_1, _ = _verify(port, pin_dir=TEST_RECEIVED)
+    overall_1, _ = _verify(port)
     assert overall_1, "[j] Verify lần 1 trên cert valid phải PASS"
-
-    pin_path = Path(TEST_RECEIVED) / "localhost" / "pin.json"
-    assert pin_path.exists(), "[j] pin.json phải được tạo sau verify lần 1"
-    store_1 = json.loads(pin_path.read_text(encoding="utf-8"))
-    assert store_1.get("version") == 2, "[j] pin store phải là v2"
-    assert len(store_1["pins"]) == 1, \
-        f"[j] Sau verify lần 1 chỉ có 1 pin, hiện có {len(store_1['pins'])}"
-    fp_a = store_1["pins"][0]["fingerprint_sha256"]
 
     # Renew: rotate key + sinh cert mới
     _mgr.renew_server(name, rotate_key=True, validity_days=365)
@@ -277,28 +255,10 @@ def test_j_renew_rotation_pin_overlap():
     assert serial_a in entry.previous_serials, \
         "[j] previous_serials phải chứa serial cũ"
 
-    # Verify lần 2 — pin rotation
-    overall_2, _ = _verify(port, pin_dir=TEST_RECEIVED)
+    overall_2, _ = _verify(port)
     assert overall_2, "[j] Verify lần 2 trên cert đã renew phải PASS"
 
-    store_2 = json.loads(pin_path.read_text(encoding="utf-8"))
-    fps = [p["fingerprint_sha256"] for p in store_2["pins"]]
-    assert len(fps) == 2, \
-        f"[j] Sau verify lần 2 phải có 2 pin (overlap), hiện có {len(fps)}: {fps}"
-    assert fp_a in fps, "[j] Pin cũ (cert A) phải còn — backup pin overlap"
-    fp_b_candidates = [fp for fp in fps if fp != fp_a]
-    assert len(fp_b_candidates) == 1, "[j] Phải có đúng 1 pin mới (cert B)"
-    # Cả 2 issuer phải trùng nhau (cùng Root CA)
-    issuers = {p["issuer"] for p in store_2["pins"]}
-    assert len(issuers) == 1, \
-        f"[j] Cả 2 pin phải cùng issuer (Root CA), thực tế: {issuers}"
-
-    # Manual prune: không pin nào hết hạn → 0 prune
-    n_pruned, _ = prune_expired_pins("localhost", base_dir=TEST_RECEIVED)
-    assert n_pruned == 0, \
-        f"[j] Không pin nào hết hạn nên prune phải = 0, lại = {n_pruned}"
-
-    print("  [j] PASS ✓ — renew rotation: 2 pin overlap, cùng issuer, không prune")
+    print("  [j] PASS ✓ — renew rotation: cert mới khác serial, vẫn hợp lệ qua 5 bước")
 
 
 def test_i_delete_server():
@@ -333,7 +293,7 @@ TESTS = [
     test_f_publish_crl,
     test_g_ocsp_down,
     test_h_tampered,
-    test_j_renew_rotation_pin_overlap,
+    test_j_renew_rotation_still_valid,
     test_i_delete_server,
 ]
 

@@ -139,8 +139,8 @@ class ServerManager:
         Thử load cert/key đã có trên disk cho flavor 'valid'.
 
         Reuse được khi: file tồn tại, parse được, issuer khớp Root CA hiện tại,
-        và cert còn trong thời hạn. Mục đích: pin warning ổn định qua các lần
-        khởi động lại GUI (cùng tên server → cùng fingerprint → pin match).
+        và cert còn trong thời hạn. Mục đích: cùng tên server → cùng cert qua các
+        lần khởi động lại GUI (demo ổn định, tránh sinh lại cert/key không cần thiết).
 
         Trả về (cert, key, serial) nếu reuse được, None nếu cần sinh mới.
         """
@@ -338,8 +338,7 @@ class ServerManager:
         """
         Sinh cert MỚI (Root CA ký, không expired), ghi đè file cert/key của
         server đang chạy. Socket vẫn giữ — lần GET_CERT kế tiếp client nhận
-        được cert mới, fingerprint sẽ khác → client-side pin store xử lý
-        rotation (xem `check_pinned` trong client.py).
+        được cert mới (fingerprint khác cert cũ).
 
         Tham số:
           rotate_key=True   → sinh keypair MỚI (best-practice, mặc định)

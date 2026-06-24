@@ -311,8 +311,12 @@ def revoke_certs_by_key(
     thu hồi cert là containment quan trọng nhất; nếu lỗi giữa (1) và (3), cert
     đã revoked (an toàn) và bước wipe key là idempotent, chạy lại được.
 
+    Sau khi thu hồi cert + wipe key, còn HỦY mọi CSR đang pending dùng chung
+    khóa này (containment — khóa đã lộ không được sinh thêm cert).
+
     Trả về dict {anchor_id, key_fingerprint, matched, revoked_ids,
-                 already_revoked_ids, revoked_count}.
+                 already_revoked_ids, revoked_count, compromised_key_ids,
+                 cancelled_csr_ids}.
     Raise CertLifecycleError nếu reason rỗng/quá dài hoặc cert_id không hợp lệ.
     """
     reason = (reason or "").strip()
@@ -348,6 +352,15 @@ def revoke_certs_by_key(
     # (cross-owner: đây là công cụ của Admin, có thẩm quyền containment).
     compromised_key_ids = compromise_keys_for_fingerprint(key_fp, db_path)
 
+    # Khóa đã vô hiệu hóa → hủy luôn các CSR đang pending dùng chính khóa đó,
+    # tránh admin lỡ duyệt rồi phát hành cert mới từ một khóa đã lộ. Import cục bộ
+    # để tránh phụ thuộc vòng giữa hai service ở thời điểm nạp module.
+    from services.csr_workflow import cancel_pending_csrs_for_fingerprint
+    cancelled_csr_ids = cancel_pending_csrs_for_fingerprint(
+        key_fp, db_path, admin_id=admin_id,
+        reason=f"Tự hủy do revoke-by-key (lộ khóa) — fingerprint {key_fp[:16]}…",
+    )
+
     return {
         "anchor_id":            cert_id,
         "key_fingerprint":      key_fp,
@@ -356,6 +369,7 @@ def revoke_certs_by_key(
         "already_revoked_ids":  already,
         "revoked_count":        len(revoked_ids),
         "compromised_key_ids":  compromised_key_ids,
+        "cancelled_csr_ids":    cancelled_csr_ids,
     }
 
 

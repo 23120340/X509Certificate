@@ -428,7 +428,6 @@ class App:
                 cert_bytes, host,
                 trust_store_dir=self.trust_store_dir,
                 log_callback=self._thread_log,
-                peer_address=peer_address,
             )
 
             # Các bước đã được stream chi tiết ở trên — chỉ tóm tắt 1 dòng,
@@ -509,8 +508,7 @@ class App:
         """
         Đóng app: dừng socket demo + Lab CRL/OCSP server. KHÔNG xóa cert file,
         để lần khởi động sau, cert/key của các 'valid' server còn trên disk và
-        ServerManager có thể reuse → pin warning của client ổn định qua các
-        lần mở/đóng GUI.
+        ServerManager có thể reuse (tránh sinh lại cert/key mỗi lần mở/đóng GUI).
         """
         self.mgr.remove_all(cleanup_files=False)
         try:

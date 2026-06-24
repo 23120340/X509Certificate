@@ -322,15 +322,32 @@ class RevokeCertDialog(tk.Toplevel):
                     "via": "revoke_by_key",
                 },
             )
+        cancelled_csrs = result.get("cancelled_csr_ids") or []
+        if cancelled_csrs:
+            write_audit(
+                self.app.db_path, self.app.session["id"], Action.CSR_REJECTED,
+                target_type="csr",
+                target_id=",".join(map(str, cancelled_csrs)),
+                details={
+                    "key_fingerprint": result["key_fingerprint"],
+                    "cancelled_csr_ids": cancelled_csrs,
+                    "reason": "key compromised — revoke_by_key cascade",
+                    "via": "revoke_by_key",
+                },
+            )
         messagebox.showinfo(
             "Đã thu hồi theo khóa",
             f"Đã thu hồi {result['revoked_count']} cert dùng chung khóa "
             f"(fingerprint {result['key_fingerprint'][:16]}…).\n"
             f"Cert IDs: {', '.join(map(str, result['revoked_ids'])) or '—'}\n"
             + (f"Đã đánh dấu LỘ KHÓA + hủy private key của {len(compromised)} "
-               f"keypair (id: {', '.join(map(str, compromised))})."
+               f"keypair (id: {', '.join(map(str, compromised))}).\n"
                if compromised else
-               "Không có keypair nào trong hệ thống khớp khóa để đánh dấu."),
+               "Không có keypair nào trong hệ thống khớp khóa để đánh dấu.\n")
+            + (f"Đã hủy {len(cancelled_csrs)} CSR đang chờ duyệt dùng chung khóa "
+               f"(id: {', '.join(map(str, cancelled_csrs))})."
+               if cancelled_csrs else
+               "Không có CSR pending nào dùng chung khóa."),
         )
         self._finish()
 

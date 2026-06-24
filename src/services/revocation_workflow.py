@@ -31,6 +31,7 @@ from services.cert_lifecycle import (
     certs_sharing_public_key, key_fingerprint_for_cert, CertLifecycleError,
 )
 from services.customer_keys import compromise_keys_for_fingerprint
+from services.csr_workflow import cancel_pending_csrs_for_fingerprint
 from services.crl_publish import (
     DEFAULT_OCSP_DB_PATH,
     sync_ocsp_db,
@@ -298,16 +299,24 @@ def approve_revocation(
 
     sync_ocsp_db(db_path, ocsp_db_path)
 
-    # Lộ khóa → đánh dấu + wipe private key (chỉ trong phạm vi chủ sở hữu request).
+    # Lộ khóa → đánh dấu + wipe private key, đồng thời HỦY các CSR đang pending
+    # dùng chung khóa đó (chỉ trong phạm vi chủ sở hữu request — giữ BOLA; khóa
+    # đã lộ không được phép sinh thêm cert).
     compromised_key_ids: "list[int]" = []
+    cancelled_csr_ids: "list[int]" = []
     if key_compromise:
         try:
             fp = key_fingerprint_for_cert(cert_id, db_path)
             compromised_key_ids = compromise_keys_for_fingerprint(
                 fp, db_path, owner_id=peek["cert_owner_id"],
             )
+            cancelled_csr_ids = cancel_pending_csrs_for_fingerprint(
+                fp, db_path, admin_id=admin_id, owner_id=peek["cert_owner_id"],
+                reason=f"Tự hủy do duyệt yêu cầu thu hồi lộ khóa (request #{req_id}).",
+            )
         except CertLifecycleError:
             compromised_key_ids = []
+            cancelled_csr_ids = []
 
     crl_result = None
     crl_error = None
@@ -332,6 +341,7 @@ def approve_revocation(
         "revoked_ids":      revoked_ids,
         "revoked_count":    len(revoked_ids),
         "compromised_key_ids": compromised_key_ids,
+        "cancelled_csr_ids": cancelled_csr_ids,
         "crl_result":       crl_result,
         "crl_error":        crl_error,
     }

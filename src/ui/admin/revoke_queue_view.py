@@ -243,6 +243,19 @@ class RevokeQueueFrame(ttk.Frame):
                     "request_id": req_id,
                 },
             )
+        cancelled_csrs = result.get("cancelled_csr_ids") or []
+        if cancelled_csrs:
+            write_audit(
+                self.app.db_path, self.app.session["id"], Action.CSR_REJECTED,
+                target_type="csr",
+                target_id=",".join(map(str, cancelled_csrs)),
+                details={
+                    "cancelled_csr_ids": cancelled_csrs,
+                    "reason": "key compromised — revocation_request cascade",
+                    "via": "revocation_request",
+                    "request_id": req_id,
+                },
+            )
         crl_result = result.get("crl_result")
         crl_error = result.get("crl_error")
         if crl_result:
@@ -266,6 +279,8 @@ class RevokeQueueFrame(ttk.Frame):
                 f"(lộ khóa)."
                 + (f" Đã hủy private key của {len(compromised)} keypair."
                    if compromised else "")
+                + (f" Đã hủy {len(cancelled_csrs)} CSR pending dùng chung khóa."
+                   if cancelled_csrs else "")
             )
         elif result["cert_was_revoked"]:
             cert_line = "Cert đã revoke."

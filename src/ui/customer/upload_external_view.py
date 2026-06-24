@@ -464,8 +464,6 @@ class VerifyExternalDialog(tk.Toplevel):
                 hostname=hostname,
                 trust_store_dir=TRUST_STORE_DIR,
                 log_callback=self._log,
-                pin_dir="received_certs",
-                peer_address=None,
             )
         except Exception as e:
             self._log(f"[FAIL] Lỗi verify: {type(e).__name__}: {e}", "fail")
@@ -477,10 +475,8 @@ class VerifyExternalDialog(tk.Toplevel):
             self._log(
                 "[PASS] Tổng kết: chứng chỉ HỢP LỆ (qua tất cả các bước).", "ok")
         else:
-            # Chỉ liệt kê các bước BẮT BUỘC (Bước 1-5) đã fail — bỏ bước phụ
-            # "Pin warning (advisory)" vì nó KHÔNG tính vào overall_pass.
-            fails = [name for name, ok, _ in results
-                     if not ok and not name.startswith("Bước phụ")]
+            # results chỉ gồm 5 bước chính (Bước 1-5) — liệt kê các bước đã fail.
+            fails = [name for name, ok, _ in results if not ok]
             self._log(
                 f"[FAIL] Tổng kết: chứng chỉ KHÔNG HỢP LỆ — thất bại ở: "
                 f"{', '.join(fails) or '?'}.", "fail",
